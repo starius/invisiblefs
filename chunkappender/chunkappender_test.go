@@ -63,7 +63,7 @@ func TestRead(t *testing.T) {
 				t.Errorf("reading [%d, %d): %s", x, y, err)
 			}
 			if n != len(buf) {
-				t.Errorf("reading [%d, %d): want %d bytes, got %s", x, y, len(buf), n)
+				t.Errorf("reading [%d, %d): want %d bytes, got %d", x, y, len(buf), n)
 			}
 			if !bytes.Equal(buf, text[x:y]) {
 				t.Errorf("ReadAt [%d, %d) returned %q, want %q", x, y, string(buf), string(text[x:y]))
@@ -117,7 +117,7 @@ func TestReadLarge(t *testing.T) {
 				t.Errorf("reading [%d, %d): %s", x, y, err)
 			}
 			if n != len(buf) {
-				t.Errorf("reading [%d, %d): want %d bytes, got %s", x, y, len(buf), n)
+				t.Errorf("reading [%d, %d): want %d bytes, got %d", x, y, len(buf), n)
 			}
 			if !bytes.Equal(buf, text[x:y]) {
 				t.Errorf("ReadAt [%d, %d) returned %q, want %q", x, y, string(buf), string(text[x:y]))
@@ -148,7 +148,7 @@ func TestWrite(t *testing.T) {
 			t.Errorf("writing [%d, %d): %s", total, nextTotal, err)
 		}
 		if n != len(chunk) {
-			t.Errorf("writing [%d, %d): want %d bytes, got %s", total, nextTotal, len(chunk), n)
+			t.Errorf("writing [%d, %d): want %d bytes, got %d", total, nextTotal, len(chunk), n)
 		}
 		total = nextTotal
 	}
@@ -158,7 +158,7 @@ func TestWrite(t *testing.T) {
 		t.Errorf("reading [%d, %d): %s", 0, len(t2), err)
 	}
 	if n != len(t2) {
-		t.Errorf("reading [%d, %d): want %d bytes, got %s", 0, len(t2), len(t2), n)
+		t.Errorf("reading [%d, %d): want %d bytes, got %d", 0, len(t2), len(t2), n)
 	}
 	if !bytes.Equal(t2, text) {
 		t.Errorf("ReadAt [%d, %d) returned %q, want %q", 0, len(t2), string(t2), string(text))
