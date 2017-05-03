@@ -1,4 +1,4 @@
-// Package inmem provides an in memory LRU cache with TTL support.
+// Package inmem provides an in memory LRU cache with TTL or weights support.
 package inmem
 
 import (
