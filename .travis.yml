@@ -5,6 +5,10 @@ go:
   - 1.7
   - 1.8
 
+os:
+  - linux
+  - osx
+
 before_install:
   - go get -v golang.org/x/tools/cmd/vet
   - go get -v golang.org/x/tools/cmd/cover
