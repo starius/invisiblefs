@@ -28,10 +28,10 @@ type WeightCache struct {
 // and the given maximum sum of weights of elements.
 func NewWeight(maxItems int, maxWeight int64) (*WeightCache, error) {
 	if maxItems <= 0 {
-		return nil, fmt.Errorf("NewCache: maxItems <= 0")
+		return nil, fmt.Errorf("NewWeight: maxItems <= 0")
 	}
 	if maxWeight <= 0 {
-		return nil, fmt.Errorf("NewCache: maxWeight <= 0")
+		return nil, fmt.Errorf("NewWeight: maxWeight <= 0")
 	}
 	return &WeightCache{
 		maxItems:  maxItems,
