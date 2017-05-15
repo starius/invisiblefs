@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package zipkv;
+
+message Location {
+  sint32 backend_file = 1;
+  sint32 offset = 2;
+  sint32 size = 3;
+}
+
+message Db {
+  map<string, Location> frontend_files = 1;
+  sint32 next_backend_file = 2;
+}
