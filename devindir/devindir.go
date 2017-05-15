@@ -10,7 +10,6 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	"github.com/starius/invisiblefs/inmem"
 	"golang.org/x/net/context"
 )
 
@@ -24,14 +23,13 @@ type Dir struct {
 }
 
 type File struct {
-	m       sync.Mutex
-	bs      int64
-	size    int64
-	dir     string
-	bfcache *inmem.CloserCache
+	m    sync.Mutex
+	bs   int64
+	size int64
+	dir  string
 }
 
-func New(dir, fname string, blockSize int, fileSize int64, filesCacheSize int) (*Fs, error) {
+func New(dir, fname string, blockSize int, fileSize int64) (*Fs, error) {
 	stat, err := os.Stat(dir)
 	if err != nil {
 		return nil, fmt.Errorf("os.Stat(%q): %s", dir, err)
@@ -39,24 +37,13 @@ func New(dir, fname string, blockSize int, fileSize int64, filesCacheSize int) (
 	if !stat.Mode().IsDir() {
 		return nil, fmt.Errorf("%q is not a dir", dir)
 	}
-	closer := func(f interface{}) {
-		log.Printf("Closing %q", f.(*os.File).Name())
-		if err := f.(*os.File).Close(); err != nil {
-			log.Printf("Failed to close a file.")
-		}
-	}
-	bfcache, err := inmem.NewCloserCache(filesCacheSize, closer)
-	if err != nil {
-		return nil, fmt.Errorf("inmem.NewCloserCache: %s", err)
-	}
 	return &Fs{
 		d: &Dir{
 			fname: fname,
 			f: &File{
-				bs:      int64(blockSize),
-				size:    fileSize,
-				dir:     dir,
-				bfcache: bfcache,
+				bs:   int64(blockSize),
+				size: fileSize,
+				dir:  dir,
 			},
 		},
 	}, nil
@@ -117,25 +104,11 @@ func (f *File) blockName(b int64) string {
 }
 
 func (f *File) open(b int64, write bool) (*os.File, error) {
-	f.m.Lock()
-	defer f.m.Unlock()
-	if bf, has := f.bfcache.Get(b); has {
-		return bf.(*os.File), nil
-	}
 	fname := f.blockName(b)
-	bf, err := os.OpenFile(fname, os.O_RDWR, 0600)
-	if err == nil {
-		f.bfcache.Add(b, bf)
-		return bf, nil
-	}
 	if !write {
-		return nil, err
+		return os.OpenFile(fname, os.O_RDWR, 0600)
 	}
-	bf, err = os.OpenFile(fname, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
-	if err == nil {
-		f.bfcache.Add(b, bf)
-	}
-	return bf, err
+	return os.OpenFile(fname, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 }
 
 func (f *File) blocks(offset, size int64) (int64, int64) {
@@ -212,28 +185,9 @@ func (f *File) Write(ctx context.Context, req *fuse.WriteRequest, res *fuse.Writ
 }
 
 func (f *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
-	f.m.Lock()
-	defer f.m.Unlock()
-	for _, entry := range f.bfcache.Items() {
-		bf := entry.Value.(*os.File)
-		if err := bf.Sync(); err != nil {
-			log.Printf("Failed to sync file %q: %s.", bf.Name(), err)
-			return fuse.EIO
-		}
-	}
 	return nil
 }
 
 func (f *File) Close() error {
-	f.m.Lock()
-	defer f.m.Unlock()
-	for _, entry := range f.bfcache.Items() {
-		bf := entry.Value.(*os.File)
-		log.Printf("Closing file %s.", bf.Name())
-		if err := bf.Close(); err != nil {
-			log.Printf("Failed to close file %q: %s.", bf.Name(), err)
-		}
-	}
-	f.bfcache = nil // No open() must be called after this point.
 	return nil
 }

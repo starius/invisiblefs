@@ -20,7 +20,6 @@ var (
 	bs         = flag.Int("bs", 40*1024*1024, "Block size, bytes")
 	size       = flag.Int64("size", 1000000000000, "File size")
 	fname      = flag.String("fname", "dev", "File name")
-	cacheSize  = flag.Int("files-cache", 100, "Open files cache size")
 )
 
 func main() {
@@ -29,7 +28,7 @@ func main() {
 		flag.PrintDefaults()
 		log.Fatal("Provide -dir and -mountpoint")
 	}
-	dfs, err := devindir.New(*dir, *fname, *bs, *size, *cacheSize)
+	dfs, err := devindir.New(*dir, *fname, *bs, *size)
 	if err != nil {
 		log.Fatalf("Failed to create fs object: %s.", err)
 	}
