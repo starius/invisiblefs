@@ -33,13 +33,12 @@ func Zip(backend KV, maxValueSize int) (*Frontend, error) {
 }
 
 type Frontend struct {
-	be        KV
-	max       int
-	nextDb    int
-	nextBlock int32
-	db        *Db
-	next      []byte
-	m         sync.RWMutex
+	be     KV
+	max    int
+	nextDb int
+	db     *Db
+	next   []byte
+	m      sync.RWMutex
 }
 
 func (f *Frontend) dbName(i int) string {
@@ -102,7 +101,7 @@ func (f *Frontend) Get(key string) ([]byte, error) {
 		f.m.RUnlock()
 		return nil, fmt.Errorf("no key %q", key)
 	}
-	if loc.BackendFile == f.nextBlock {
+	if loc.BackendFile == f.db.NextBackendFile {
 		data := f.next[loc.Offset : loc.Offset+loc.Size]
 		f.m.RUnlock()
 		return data, nil
@@ -128,7 +127,7 @@ func (f *Frontend) GetAt(key string, offset, size int) ([]byte, error) {
 		return nil, fmt.Errorf("%d+%d > %d", offset, size, loc.Size)
 	}
 	offset2 := int(loc.Offset) + offset
-	if loc.BackendFile == f.nextBlock {
+	if loc.BackendFile == f.db.NextBackendFile {
 		data := f.next[offset2 : offset2+size]
 		f.m.RUnlock()
 		return data, nil
@@ -160,14 +159,14 @@ func (f *Frontend) writeDb() error {
 
 func (f *Frontend) writeNext() error {
 	// Call this function under f.m.Lock().
-	blockname := f.blockName(f.nextBlock)
+	blockname := f.blockName(f.db.NextBackendFile)
 	if err := f.be.Put(blockname, f.next); err != nil {
 		return fmt.Errorf("f.be.Put(%q, ...): %s", blockname, err)
 	}
+	f.db.NextBackendFile++
 	if err := f.writeDb(); err != nil {
 		return fmt.Errorf("f.writeDb(): %s", err)
 	}
-	f.nextBlock++
 	f.next = nil
 	return nil
 }
@@ -184,7 +183,7 @@ func (f *Frontend) Put(key string, value []byte) error {
 		}
 	}
 	f.db.FrontendFiles[key] = &Location{
-		BackendFile: f.nextBlock,
+		BackendFile: f.db.NextBackendFile,
 		Offset:      int32(len(f.next)),
 		Size:        int32(len(value)),
 	}
