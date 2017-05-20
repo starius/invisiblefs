@@ -186,6 +186,12 @@ func (f *Frontend) Put(key string, value []byte) error {
 			return fmt.Errorf("f.writeNext(): %s", err)
 		}
 	}
+	if loc, has := f.db.FrontendFiles[key]; has {
+		f.db.History = append(f.db.History, &HistoryRecord{
+			Filename: key,
+			Location: loc,
+		})
+	}
 	f.db.FrontendFiles[key] = &Location{
 		BackendFile: f.db.NextBackendFile,
 		Offset:      int32(len(f.next)),
@@ -198,9 +204,14 @@ func (f *Frontend) Put(key string, value []byte) error {
 func (f *Frontend) Delete(key string) error {
 	f.m.Lock()
 	defer f.m.Unlock()
-	if _, has := f.db.FrontendFiles[key]; !has {
+	loc, has := f.db.FrontendFiles[key]
+	if !has {
 		return fmt.Errorf("no key %q", key)
 	}
+	f.db.History = append(f.db.History, &HistoryRecord{
+		Filename: key,
+		Location: loc,
+	})
 	delete(f.db.FrontendFiles, key)
 	return nil
 }

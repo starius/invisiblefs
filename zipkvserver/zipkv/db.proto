@@ -8,7 +8,13 @@ message Location {
   sint32 size = 3;
 }
 
+message HistoryRecord {
+  string filename = 1;
+  Location location = 2;
+}
+
 message Db {
   map<string, Location> frontend_files = 1;
   sint32 next_backend_file = 2;
+  repeated HistoryRecord history = 3;
 }
