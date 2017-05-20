@@ -200,7 +200,7 @@ func (f *Frontend) Delete(key string) error {
 	return nil
 }
 
-func (f *Frontend) Sync(key string) error {
+func (f *Frontend) Sync() error {
 	f.m.Lock()
 	defer f.m.Unlock()
 	if len(f.next) > 0 {
