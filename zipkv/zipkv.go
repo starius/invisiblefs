@@ -9,6 +9,8 @@ import (
 
 //go:generate protoc --proto_path=. --go_out=. db.proto
 
+const maxDbName = 9
+
 type KV interface {
 	Has(key string) (bool, error)
 	Get(key string) ([]byte, error)
@@ -35,7 +37,7 @@ func Zip(backend KV, maxValueSize int) (*Frontend, error) {
 type Frontend struct {
 	be     KV
 	max    int
-	nextDb int
+	currDb int
 	db     *Db
 	next   []byte
 	m      sync.RWMutex
@@ -50,14 +52,15 @@ func (f *Frontend) blockName(i int32) string {
 }
 
 func (f *Frontend) findDb() (int, error) {
-	for i := 0; ; i++ {
+	for i := 0; i <= maxDbName; i++ {
 		dbname := f.dbName(i)
 		if has, err := f.be.Has(dbname); err != nil {
 			return 0, fmt.Errorf("f.be.Has(%q): %s", dbname, err)
-		} else if !has {
-			return i - 1, nil
+		} else if has {
+			return i, nil
 		}
 	}
+	return -1, nil
 }
 
 func (f *Frontend) setupDb() error {
@@ -83,7 +86,7 @@ func (f *Frontend) setupDb() error {
 	if f.db.FrontendFiles == nil {
 		f.db.FrontendFiles = make(map[string]*Location)
 	}
-	f.nextDb = i + 1
+	f.currDb = i
 	return nil
 }
 
@@ -143,17 +146,18 @@ func (f *Frontend) writeDb() error {
 	if err != nil {
 		return fmt.Errorf("proto.Marshal(f.db): %s", err)
 	}
-	dbname := f.dbName(f.nextDb)
+	nextDb := (f.currDb + 1) % (maxDbName + 1)
+	dbname := f.dbName(nextDb)
 	if err := f.be.Put(dbname, data); err != nil {
 		return fmt.Errorf("f.be.Put(%q, ...): %s", dbname, err)
 	}
-	if f.nextDb != 0 {
-		prevname := f.dbName(f.nextDb - 1)
+	if f.currDb != -1 {
+		prevname := f.dbName(f.currDb)
 		if err := f.be.Delete(prevname); err != nil {
 			return fmt.Errorf("f.be.Delete(%q): %s", prevname, err)
 		}
 	}
-	f.nextDb++
+	f.currDb = nextDb
 	return nil
 }
 
