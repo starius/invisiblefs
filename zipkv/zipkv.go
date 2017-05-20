@@ -78,9 +78,11 @@ func (f *Frontend) setupDb() error {
 		}
 	} else {
 		f.db = &Db{
-			FrontendFiles:   make(map[string]*Location),
 			NextBackendFile: 0,
 		}
+	}
+	if f.db.FrontendFiles == nil {
+		f.db.FrontendFiles = make(map[string]*Location)
 	}
 	f.nextDb = i + 1
 	return nil
