@@ -11,9 +11,9 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/starius/invisiblefs/zipkv"
-	"github.com/starius/invisiblefs/zipkv/fskv"
-	"github.com/starius/invisiblefs/zipkv/kvhttp"
+	"github.com/starius/invisiblefs/zipkvserver/fskv"
+	"github.com/starius/invisiblefs/zipkvserver/kvhttp"
+	"github.com/starius/invisiblefs/zipkvserver/zipkv"
 )
 
 var (

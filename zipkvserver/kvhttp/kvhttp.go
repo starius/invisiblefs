@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/starius/invisiblefs/zipkv"
+	"github.com/starius/invisiblefs/zipkvserver/zipkv"
 )
 
 type Handler struct {
