@@ -56,6 +56,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Write: %s", err)
 			return
 		}
+	} else if r.Method == "HEAD" {
+		has, err := h.kv.Has(key)
+		if err != nil {
+			log.Printf("Has(%q): %s", key, err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if has {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+		return
 	} else if r.Method == "PUT" {
 		if r.ContentLength > h.maxValue {
 			log.Printf("%d > %d", r.ContentLength, h.maxValue)
