@@ -1,6 +1,7 @@
 package kvhttp
 
 import (
+	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -86,6 +87,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
+		digest := md5.Sum(value)
+		w.Header().Set("ETag", hex.EncodeToString(digest[:]))
 		w.WriteHeader(http.StatusOK)
 	} else if r.Method == "DELETE" {
 		if err := h.kv.Delete(key); err != nil {
