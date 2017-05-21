@@ -17,9 +17,10 @@ import (
 )
 
 var (
-	dir  = flag.String("dir", "", "Dir with underlying files")
-	addr = flag.String("addr", "127.0.0.1:7711", "HTTP server")
-	bs   = flag.Int("bs", 40*1024*1024, "Block size, bytes")
+	dir    = flag.String("dir", "", "Dir with underlying files")
+	addr   = flag.String("addr", "127.0.0.1:7711", "HTTP server")
+	bs     = flag.Int("bs", 40*1024*1024, "Block size, bytes")
+	bucket = flag.String("bucket", "bucket", "Bucket name")
 )
 
 func main() {
@@ -36,7 +37,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create zipkv object: %s.", err)
 	}
-	handler, err := kvhttp.New(fe, *bs)
+	handler, err := kvhttp.New(fe, *bs, "/"+*bucket+"/")
 	if err != nil {
 		log.Fatalf("Failed to create kvhttp handler object: %s.", err)
 	}

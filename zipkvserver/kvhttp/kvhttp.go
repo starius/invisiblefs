@@ -27,16 +27,36 @@ const (
   <RequestId>%s</RequestId>
 </Error>
 	`
+	xmlListHead = `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Name>bucket</Name>
+    <Prefix/>
+    <KeyCount>%d</KeyCount>
+    <MaxKeys>%d</MaxKeys>
+    <IsTruncated>false</IsTruncated>
+	`
+	xmlListContents = `
+    <Contents>
+        <Key>%s</Key>
+        <Size>%d</Size>
+        <StorageClass>STANDARD</StorageClass>
+    </Contents>
+	`
+	xmlListTail = `
+</ListBucketResult>
+	`
 )
 
 type Handler struct {
 	kv       zipkv.KV
+	baseURL  string
 	maxValue int64
 }
 
-func New(kv zipkv.KV, maxValue int) (*Handler, error) {
+func New(kv zipkv.KV, maxValue int, baseURL string) (*Handler, error) {
 	return &Handler{
 		kv:       kv,
+		baseURL:  baseURL,
 		maxValue: int64(maxValue),
 	}, nil
 }
@@ -61,8 +81,46 @@ func writeMetadata(w http.ResponseWriter, metadata []byte) error {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Path
-	log.Printf("%s %s %#v", r.Method, key, r.Header)
-	if r.Method == "GET" {
+	log.Printf("%s %s?%s %#v", r.Method, key, r.URL.RawQuery, r.Header)
+	if !strings.HasPrefix(key, h.baseURL) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	key = strings.TrimPrefix(key, h.baseURL)
+	if r.Method == "GET" && key == "" {
+		prefix := r.URL.Query().Get("prefix")
+		list, err := h.kv.List()
+		if err != nil {
+			log.Printf("List(): %s", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		var list2 []zipkv.Header
+		for _, c := range list {
+			if strings.HasPrefix(c.Key, prefix) {
+				list2 = append(list2, c)
+			}
+		}
+		var buf []string
+		l := len(list2)
+		buf = append(buf, fmt.Sprintf(xmlListHead, l, l))
+		for _, c := range list2 {
+			if strings.HasPrefix(c.Key, prefix) {
+				cs := fmt.Sprintf(xmlListContents, c.Key, c.Size)
+				buf = append(buf, cs)
+			}
+		}
+		buf = append(buf, xmlListTail)
+		buf2 := strings.Join(buf, "")
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte(buf2)); err != nil {
+			log.Printf("Write: %s", err)
+			return
+		}
+		return
+	} else if r.Method == "GET" || r.Method == "HEAD" {
+		// TODO Range: bytes.
 		value, metadata, err := h.kv.Get(key)
 		if err != nil {
 			log.Printf("Get(%q): %s", key, err)
