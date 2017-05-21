@@ -76,6 +76,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		digest := md5.Sum(value)
+		w.Header().Set("ETag", hex.EncodeToString(digest[:]))
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write(value); err != nil {
 			log.Printf("Write: %s", err)
