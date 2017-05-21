@@ -27,6 +27,10 @@ const (
   <RequestId>%s</RequestId>
 </Error>
 	`
+	xmlCopy = `<?xml version="1.0" encoding="UTF-8"?>
+<CopyObjectResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+</CopyObjectResult>
+	`
 	xmlListHead = `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
     <Name>bucket</Name>
@@ -163,6 +167,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		copySource := r.Header.Get("x-amz-copy-source")
+		if copySource != "" {
+			// http://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectCOPY.html
+			copySource := strings.TrimPrefix(copySource, h.baseURL)
+			log.Printf("x-amz-copy-source: %s", copySource)
+			has, srcMd, err := h.kv.Has(copySource)
+			if err != nil {
+				log.Printf("h.kv.Has(%q): %s", copySource, err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if !has {
+				w.Header().Set("Content-Type", "application/xml")
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(fmt.Sprintf(xml404, copySource, genRequestId())))
+				return
+			}
+			mdDir := r.Header.Get("x-amz-metadata-directive")
+			if mdDir == "COPY" || mdDir == "" {
+				metadata = srcMd
+			} else if mdDir == "REPLACE" {
+				// Nothing to do, metadata has been read above.
+			} else {
+				log.Printf("bad x-amz-metadata-directive: %s.", mdDir)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if err := h.kv.Link(key, copySource, metadata); err != nil {
+				log.Printf("h.kv.Has(%q): %s", copySource, err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(xmlCopy))
+			return
+		}
 		if r.ContentLength > h.maxValue {
 			log.Printf("%d > %d", r.ContentLength, h.maxValue)
 			w.WriteHeader(http.StatusRequestEntityTooLarge)
@@ -182,6 +222,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		digest := md5.Sum(value)
 		w.Header().Set("ETag", hex.EncodeToString(digest[:]))
 		w.WriteHeader(http.StatusOK)
+		return
 	} else if r.Method == "DELETE" {
 		if _, err := h.kv.Delete(key); err != nil {
 			log.Printf("Delete(%q): %s", key, err)
