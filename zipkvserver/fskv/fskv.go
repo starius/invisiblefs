@@ -66,6 +66,10 @@ func (f *FsKV) Put(key string, value, metadata []byte) error {
 	return ioutil.WriteFile(path, value, 0600)
 }
 
+func (f *FsKV) Link(dstKey, srcKey string, metadata []byte) error {
+	return fmt.Errorf("fskv doesn't support Link")
+}
+
 func (f *FsKV) Delete(key string) ([]byte, error) {
 	path := filepath.Join(f.root, key)
 	return nil, os.Remove(path)

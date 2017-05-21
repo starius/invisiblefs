@@ -26,6 +26,7 @@ type KV interface {
 	GetAt(key string, offset, size int) ([]byte, []byte, error)
 	List() ([]Header, error)
 	Put(key string, value, metadata []byte) error
+	Link(dstKey, srcKey string, metadata []byte) error
 	Delete(key string) (metadata []byte, err error)
 	Sync() error
 }
@@ -235,6 +236,29 @@ func (f *Frontend) Put(key string, value, metadata []byte) error {
 		Metadata:    metadata,
 	}
 	f.next = append(f.next, value...)
+	return nil
+}
+
+func (f *Frontend) Link(dstKey, srcKey string, metadata []byte) error {
+	f.m.Lock()
+	defer f.m.Unlock()
+	loc, has := f.db.FrontendFiles[srcKey]
+	if !has {
+		return fmt.Errorf("no key %q", srcKey)
+	}
+	prevLoc, has := f.db.FrontendFiles[dstKey]
+	if has {
+		f.db.History = append(f.db.History, &HistoryRecord{
+			Filename: dstKey,
+			Location: prevLoc,
+		})
+	}
+	f.db.FrontendFiles[dstKey] = &Location{
+		BackendFile: loc.BackendFile,
+		Offset:      loc.Offset,
+		Size:        loc.Size,
+		Metadata:    metadata,
+	}
 	return nil
 }
 
