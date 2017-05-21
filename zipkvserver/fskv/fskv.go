@@ -5,6 +5,8 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+
+	"github.com/starius/invisiblefs/zipkvserver/zipkv"
 )
 
 type FsKV struct {
@@ -50,6 +52,10 @@ func (f *FsKV) GetAt(key string, offset, size int) ([]byte, []byte, error) {
 		)
 	}
 	return buf, nil, nil
+}
+
+func (f *FsKV) List() ([]zipkv.Header, error) {
+	return nil, fmt.Errorf("fskv doesn't support List")
 }
 
 func (f *FsKV) Put(key string, value, metadata []byte) error {

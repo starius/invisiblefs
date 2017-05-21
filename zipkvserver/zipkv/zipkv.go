@@ -11,10 +11,17 @@ import (
 
 const maxDbName = 9
 
+type Header struct {
+	Key      string
+	Metadata []byte
+	Size     int32
+}
+
 type KV interface {
 	Has(key string) (bool, []byte, error)
 	Get(key string) ([]byte, []byte, error)
 	GetAt(key string, offset, size int) ([]byte, []byte, error)
+	List() ([]Header, error)
 	Put(key string, value, metadata []byte) error
 	Delete(key string) (metadata []byte, err error)
 	Sync() error
@@ -144,6 +151,18 @@ func (f *Frontend) GetAt(key string, offset, size int) ([]byte, []byte, error) {
 	blockname := f.blockName(loc.BackendFile)
 	data, _, err := f.be.GetAt(blockname, offset, size)
 	return data, loc.Metadata, err
+}
+
+func (f *Frontend) List() ([]Header, error) {
+	var list []Header
+	for key, loc := range f.db.FrontendFiles {
+		list = append(list, Header{
+			Key:      key,
+			Metadata: loc.Metadata,
+			Size:     loc.Size,
+		})
+	}
+	return list, nil
 }
 
 func (f *Frontend) writeDb() error {
