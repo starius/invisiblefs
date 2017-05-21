@@ -223,18 +223,21 @@ func (f *Frontend) Put(key string, value, metadata []byte) error {
 			return fmt.Errorf("f.writeNext(): %s", err)
 		}
 	}
-	if loc, has := f.db.FrontendFiles[key]; has {
-		f.db.History = append(f.db.History, &HistoryRecord{
-			Filename: key,
-			Location: loc,
-		})
-	}
-	f.db.FrontendFiles[key] = &Location{
+	loc := &Location{
 		BackendFile: f.db.NextBackendFile,
 		Offset:      int32(len(f.next)),
 		Size:        int32(len(value)),
 		Metadata:    metadata,
 	}
+	f.db.FrontendFiles[key] = loc
+	f.db.History = append(f.db.History, &HistoryRecord{
+		Record: &HistoryRecord_Put{
+			&PutRecord{
+				Filename: key,
+				Location: loc,
+			},
+		},
+	})
 	f.next = append(f.next, value...)
 	return nil
 }
@@ -246,19 +249,21 @@ func (f *Frontend) Link(dstKey, srcKey string, metadata []byte) error {
 	if !has {
 		return fmt.Errorf("no key %q", srcKey)
 	}
-	prevLoc, has := f.db.FrontendFiles[dstKey]
-	if has {
-		f.db.History = append(f.db.History, &HistoryRecord{
-			Filename: dstKey,
-			Location: prevLoc,
-		})
-	}
-	f.db.FrontendFiles[dstKey] = &Location{
+	newLoc := &Location{
 		BackendFile: loc.BackendFile,
 		Offset:      loc.Offset,
 		Size:        loc.Size,
 		Metadata:    metadata,
 	}
+	f.db.FrontendFiles[dstKey] = newLoc
+	f.db.History = append(f.db.History, &HistoryRecord{
+		Record: &HistoryRecord_Put{
+			&PutRecord{
+				Filename: dstKey,
+				Location: newLoc,
+			},
+		},
+	})
 	return nil
 }
 
@@ -267,11 +272,14 @@ func (f *Frontend) Delete(key string) (metadata []byte, err error) {
 	defer f.m.Unlock()
 	loc, has := f.db.FrontendFiles[key]
 	if !has {
-		return loc.Metadata, fmt.Errorf("no key %q", key)
+		return nil, fmt.Errorf("no key %q", key)
 	}
 	f.db.History = append(f.db.History, &HistoryRecord{
-		Filename: key,
-		Location: loc,
+		Record: &HistoryRecord_Delete{
+			&DeleteRecord{
+				Filename: key,
+			},
+		},
 	})
 	delete(f.db.FrontendFiles, key)
 	return loc.Metadata, nil

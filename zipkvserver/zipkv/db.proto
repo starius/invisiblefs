@@ -9,9 +9,20 @@ message Location {
   bytes metadata = 4;
 }
 
-message HistoryRecord {
+message PutRecord {
   string filename = 1;
   Location location = 2;
+}
+
+message DeleteRecord {
+  string filename = 1;
+}
+
+message HistoryRecord {
+  oneof record {
+    PutRecord put = 1;
+    DeleteRecord delete = 2;
+  }
 }
 
 message Db {
