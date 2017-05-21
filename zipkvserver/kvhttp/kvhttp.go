@@ -79,28 +79,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		digest := md5.Sum(value)
 		w.Header().Set("ETag", hex.EncodeToString(digest[:]))
 		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write(value); err != nil {
-			log.Printf("Write: %s", err)
-			return
+		if r.Method == "GET" {
+			if _, err := w.Write(value); err != nil {
+				log.Printf("Write: %s", err)
+				return
+			}
 		}
-	} else if r.Method == "HEAD" {
-		has, metadata, err := h.kv.Has(key)
-		if err != nil {
-			log.Printf("Has(%q): %s", key, err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if err := writeMetadata(w, metadata); err != nil {
-			log.Printf("writeMetadata: %s.", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if has {
-			w.WriteHeader(http.StatusOK)
-		} else {
-			w.WriteHeader(http.StatusNotFound)
-		}
-		return
 	} else if r.Method == "PUT" {
 		md := &Metadata{
 			Metadata: make(map[string]string),
