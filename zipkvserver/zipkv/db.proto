@@ -6,6 +6,7 @@ message Location {
   sint32 backend_file = 1;
   sint32 offset = 2;
   sint32 size = 3;
+  bytes metadata = 4;
 }
 
 message HistoryRecord {

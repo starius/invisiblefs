@@ -44,7 +44,7 @@ func genRequestId() string {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Path
 	if r.Method == "GET" {
-		value, err := h.kv.Get(key)
+		value, _, err := h.kv.Get(key)
 		if err != nil {
 			log.Printf("Get(%q): %s", key, err)
 			w.Header().Set("Content-Type", "application/xml")
@@ -58,7 +58,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if r.Method == "HEAD" {
-		has, err := h.kv.Has(key)
+		has, _, err := h.kv.Has(key)
 		if err != nil {
 			log.Printf("Has(%q): %s", key, err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -82,7 +82,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if err := h.kv.Put(key, value); err != nil {
+		if err := h.kv.Put(key, value, nil); err != nil {
 			log.Printf("Put(%q): %s", key, err)
 			w.WriteHeader(http.StatusBadGateway)
 			return
@@ -91,7 +91,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", hex.EncodeToString(digest[:]))
 		w.WriteHeader(http.StatusOK)
 	} else if r.Method == "DELETE" {
-		if err := h.kv.Delete(key); err != nil {
+		if _, err := h.kv.Delete(key); err != nil {
 			log.Printf("Delete(%q): %s", key, err)
 			w.WriteHeader(http.StatusNotFound)
 			return

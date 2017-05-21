@@ -12,11 +12,11 @@ import (
 const maxDbName = 9
 
 type KV interface {
-	Has(key string) (bool, error)
-	Get(key string) ([]byte, error)
-	GetAt(key string, offset, size int) ([]byte, error)
-	Put(key string, value []byte) error
-	Delete(key string) error
+	Has(key string) (bool, []byte, error)
+	Get(key string) ([]byte, []byte, error)
+	GetAt(key string, offset, size int) ([]byte, []byte, error)
+	Put(key string, value, metadata []byte) error
+	Delete(key string) (metadata []byte, err error)
 	Sync() error
 }
 
@@ -54,7 +54,7 @@ func (f *Frontend) blockName(i int32) string {
 func (f *Frontend) findDb() (int, error) {
 	for i := 0; i <= maxDbName; i++ {
 		dbname := f.dbName(i)
-		if has, err := f.be.Has(dbname); err != nil {
+		if has, _, err := f.be.Has(dbname); err != nil {
 			return 0, fmt.Errorf("f.be.Has(%q): %s", dbname, err)
 		} else if has {
 			return i, nil
@@ -70,7 +70,7 @@ func (f *Frontend) setupDb() error {
 	}
 	if i != -1 {
 		dbname := f.dbName(i)
-		data, err := f.be.Get(dbname)
+		data, _, err := f.be.Get(dbname)
 		if err != nil {
 			return fmt.Errorf("f.be.Get(%q): %s", dbname, err)
 		}
@@ -90,54 +90,60 @@ func (f *Frontend) setupDb() error {
 	return nil
 }
 
-func (f *Frontend) Has(key string) (bool, error) {
+func (f *Frontend) Has(key string) (bool, []byte, error) {
 	f.m.RLock()
 	defer f.m.RUnlock()
-	_, has := f.db.FrontendFiles[key]
-	return has, nil
+	loc, has := f.db.FrontendFiles[key]
+	if has {
+		return true, loc.Metadata, nil
+	} else {
+		return false, nil, nil
+	}
 }
 
-func (f *Frontend) Get(key string) ([]byte, error) {
+func (f *Frontend) Get(key string) ([]byte, []byte, error) {
 	f.m.RLock()
 	loc, has := f.db.FrontendFiles[key]
 	if !has {
 		f.m.RUnlock()
-		return nil, fmt.Errorf("no key %q", key)
+		return nil, nil, fmt.Errorf("no key %q", key)
 	}
 	if loc.BackendFile == f.db.NextBackendFile {
 		data := f.next[loc.Offset : loc.Offset+loc.Size]
 		f.m.RUnlock()
-		return data, nil
+		return data, loc.Metadata, nil
 	}
 	f.m.RUnlock()
 	blockname := f.blockName(loc.BackendFile)
-	return f.be.GetAt(blockname, int(loc.Offset), int(loc.Size))
+	data, _, err := f.be.GetAt(blockname, int(loc.Offset), int(loc.Size))
+	return data, loc.Metadata, err
 }
 
-func (f *Frontend) GetAt(key string, offset, size int) ([]byte, error) {
+func (f *Frontend) GetAt(key string, offset, size int) ([]byte, []byte, error) {
 	f.m.RLock()
 	loc, has := f.db.FrontendFiles[key]
 	if !has {
 		f.m.RUnlock()
-		return nil, fmt.Errorf("no key %q", key)
+		return nil, nil, fmt.Errorf("no key %q", key)
 	}
 	if offset < 0 {
 		f.m.RUnlock()
-		return nil, fmt.Errorf("offset < 0")
+		return nil, loc.Metadata, fmt.Errorf("offset < 0")
 	}
 	if offset+size > int(loc.Size) {
 		f.m.RUnlock()
-		return nil, fmt.Errorf("%d+%d > %d", offset, size, loc.Size)
+		return nil, loc.Metadata, fmt.Errorf("%d+%d > %d", offset, size, loc.Size)
 	}
 	offset2 := int(loc.Offset) + offset
 	if loc.BackendFile == f.db.NextBackendFile {
 		data := f.next[offset2 : offset2+size]
 		f.m.RUnlock()
-		return data, nil
+		return data, loc.Metadata, nil
 	}
 	f.m.RUnlock()
 	blockname := f.blockName(loc.BackendFile)
-	return f.be.GetAt(blockname, offset, size)
+	data, _, err := f.be.GetAt(blockname, offset, size)
+	return data, loc.Metadata, err
 }
 
 func (f *Frontend) writeDb() error {
@@ -148,12 +154,12 @@ func (f *Frontend) writeDb() error {
 	}
 	nextDb := (f.currDb + 1) % (maxDbName + 1)
 	dbname := f.dbName(nextDb)
-	if err := f.be.Put(dbname, data); err != nil {
+	if err := f.be.Put(dbname, data, nil); err != nil {
 		return fmt.Errorf("f.be.Put(%q, ...): %s", dbname, err)
 	}
 	if f.currDb != -1 {
 		prevname := f.dbName(f.currDb)
-		if err := f.be.Delete(prevname); err != nil {
+		if _, err := f.be.Delete(prevname); err != nil {
 			return fmt.Errorf("f.be.Delete(%q): %s", prevname, err)
 		}
 	}
@@ -164,7 +170,7 @@ func (f *Frontend) writeDb() error {
 func (f *Frontend) writeNext() error {
 	// Call this function under f.m.Lock().
 	blockname := f.blockName(f.db.NextBackendFile)
-	if err := f.be.Put(blockname, f.next); err != nil {
+	if err := f.be.Put(blockname, f.next, nil); err != nil {
 		return fmt.Errorf("f.be.Put(%q, ...): %s", blockname, err)
 	}
 	f.db.NextBackendFile++
@@ -175,7 +181,7 @@ func (f *Frontend) writeNext() error {
 	return nil
 }
 
-func (f *Frontend) Put(key string, value []byte) error {
+func (f *Frontend) Put(key string, value, metadata []byte) error {
 	if len(value) > f.max {
 		return fmt.Errorf("%d > %d", len(value), f.max)
 	}
@@ -196,24 +202,25 @@ func (f *Frontend) Put(key string, value []byte) error {
 		BackendFile: f.db.NextBackendFile,
 		Offset:      int32(len(f.next)),
 		Size:        int32(len(value)),
+		Metadata:    metadata,
 	}
 	f.next = append(f.next, value...)
 	return nil
 }
 
-func (f *Frontend) Delete(key string) error {
+func (f *Frontend) Delete(key string) (metadata []byte, err error) {
 	f.m.Lock()
 	defer f.m.Unlock()
 	loc, has := f.db.FrontendFiles[key]
 	if !has {
-		return fmt.Errorf("no key %q", key)
+		return loc.Metadata, fmt.Errorf("no key %q", key)
 	}
 	f.db.History = append(f.db.History, &HistoryRecord{
 		Filename: key,
 		Location: loc,
 	})
 	delete(f.db.FrontendFiles, key)
-	return nil
+	return loc.Metadata, nil
 }
 
 func (f *Frontend) Sync() error {
