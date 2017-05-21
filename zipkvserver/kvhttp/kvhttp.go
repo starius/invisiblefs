@@ -81,7 +81,7 @@ func writeMetadata(w http.ResponseWriter, metadata []byte) error {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Path
-	log.Printf("%s %s?%s %#v", r.Method, key, r.URL.RawQuery, r.Header)
+	log.Printf("%s %s?%s", r.Method, key, r.URL.RawQuery)
 	if !strings.HasPrefix(key, h.baseURL) {
 		w.WriteHeader(http.StatusNotFound)
 		return
