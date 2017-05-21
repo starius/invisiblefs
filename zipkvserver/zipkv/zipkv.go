@@ -1,7 +1,10 @@
 package zipkv
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
+	"io/ioutil"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
@@ -77,9 +80,13 @@ func (f *Frontend) setupDb() error {
 	}
 	if i != -1 {
 		dbname := f.dbName(i)
-		data, _, err := f.be.Get(dbname)
+		zdata, _, err := f.be.Get(dbname)
 		if err != nil {
 			return fmt.Errorf("f.be.Get(%q): %s", dbname, err)
+		}
+		data, err := f.gunzip(zdata)
+		if err != nil {
+			return fmt.Errorf("f.gunzip(zdata): %s", err)
 		}
 		f.db = &Db{}
 		if err := proto.Unmarshal(data, f.db); err != nil {
@@ -171,9 +178,13 @@ func (f *Frontend) writeDb() error {
 	if err != nil {
 		return fmt.Errorf("proto.Marshal(f.db): %s", err)
 	}
+	zdata, err := f.gzip(data)
+	if err != nil {
+		return fmt.Errorf("f.gzip(data): %s", err)
+	}
 	nextDb := (f.currDb + 1) % (maxDbName + 1)
 	dbname := f.dbName(nextDb)
-	if err := f.be.Put(dbname, data, nil); err != nil {
+	if err := f.be.Put(dbname, zdata, nil); err != nil {
 		return fmt.Errorf("f.be.Put(%q, ...): %s", dbname, err)
 	}
 	if f.currDb != -1 {
@@ -251,4 +262,35 @@ func (f *Frontend) Sync() error {
 		}
 	}
 	return nil
+}
+
+func (f *Frontend) gzip(data []byte) ([]byte, error) {
+	var b bytes.Buffer
+	gz, err := gzip.NewWriterLevel(&b, gzip.BestCompression)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := gz.Write(data); err != nil {
+		return nil, err
+	}
+	if err := gz.Flush(); err != nil {
+		return nil, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+func (f *Frontend) gunzip(zdata []byte) ([]byte, error) {
+	b := bytes.NewBuffer(zdata)
+	gz, err := gzip.NewReader(b)
+	if err != nil {
+		return nil, err
+	}
+	data, err := ioutil.ReadAll(gz)
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	return data, err
 }
