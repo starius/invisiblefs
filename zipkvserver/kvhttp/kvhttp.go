@@ -1,11 +1,27 @@
 package kvhttp
 
 import (
+	"encoding/hex"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 
+	"github.com/NebulousLabs/fastrand"
 	"github.com/starius/invisiblefs/zipkvserver/zipkv"
+)
+
+// http://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html
+
+const (
+	xml404 = `<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+  <Code>NoSuchKey</Code>
+  <Message>The resource you requested does not exist</Message>
+  <Resource>%s</Resource>
+  <RequestId>%s</RequestId>
+</Error>
+	`
 )
 
 type Handler struct {
@@ -20,13 +36,19 @@ func New(kv zipkv.KV, maxValue int) (*Handler, error) {
 	}, nil
 }
 
+func genRequestId() string {
+	return hex.EncodeToString(fastrand.Bytes(10))
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Path
 	if r.Method == "GET" {
 		value, err := h.kv.Get(key)
 		if err != nil {
 			log.Printf("Get(%q): %s", key, err)
+			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(fmt.Sprintf(xml404, key, genRequestId())))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
