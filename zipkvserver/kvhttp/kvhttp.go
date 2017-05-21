@@ -7,10 +7,14 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/NebulousLabs/fastrand"
+	"github.com/golang/protobuf/proto"
 	"github.com/starius/invisiblefs/zipkvserver/zipkv"
 )
+
+//go:generate protoc --proto_path=. --go_out=. metadata.proto
 
 // http://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html
 
@@ -41,15 +45,35 @@ func genRequestId() string {
 	return hex.EncodeToString(fastrand.Bytes(10))
 }
 
+func writeMetadata(w http.ResponseWriter, metadata []byte) error {
+	if metadata == nil {
+		return nil
+	}
+	md := &Metadata{}
+	if err := proto.Unmarshal(metadata, md); err != nil {
+		return fmt.Errorf("proto.Unmarshal: %s", err)
+	}
+	for mdKey, mdValue := range md.Metadata {
+		w.Header().Set(mdKey, mdValue)
+	}
+	return nil
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Path
+	log.Printf("%s %s %#v", r.Method, key, r.Header)
 	if r.Method == "GET" {
-		value, _, err := h.kv.Get(key)
+		value, metadata, err := h.kv.Get(key)
 		if err != nil {
 			log.Printf("Get(%q): %s", key, err)
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(fmt.Sprintf(xml404, key, genRequestId())))
+			return
+		}
+		if err := writeMetadata(w, metadata); err != nil {
+			log.Printf("writeMetadata: %s.", err)
+			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -58,9 +82,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if r.Method == "HEAD" {
-		has, _, err := h.kv.Has(key)
+		has, metadata, err := h.kv.Has(key)
 		if err != nil {
 			log.Printf("Has(%q): %s", key, err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if err := writeMetadata(w, metadata); err != nil {
+			log.Printf("writeMetadata: %s.", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -71,6 +100,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	} else if r.Method == "PUT" {
+		md := &Metadata{
+			Metadata: make(map[string]string),
+		}
+		for hrKey, hrValues := range r.Header {
+			hrKeyLower := strings.ToLower(hrKey)
+			if strings.HasPrefix(hrKeyLower, "x-amz-meta-") {
+				md.Metadata[hrKey] = hrValues[0]
+			}
+		}
+		var metadata []byte
+		if len(md.Metadata) > 0 {
+			var err error
+			metadata, err = proto.Marshal(md)
+			if err != nil {
+				log.Printf("proto.Marshal(md): %s.", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		}
 		if r.ContentLength > h.maxValue {
 			log.Printf("%d > %d", r.ContentLength, h.maxValue)
 			w.WriteHeader(http.StatusRequestEntityTooLarge)
@@ -82,7 +130,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if err := h.kv.Put(key, value, nil); err != nil {
+		if err := h.kv.Put(key, value, metadata); err != nil {
 			log.Printf("Put(%q): %s", key, err)
 			w.WriteHeader(http.StatusBadGateway)
 			return

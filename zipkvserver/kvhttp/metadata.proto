@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package kvhttp;
+
+message Metadata {
+  map<string, string> metadata = 1;
+}
