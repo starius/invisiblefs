@@ -26,7 +26,6 @@ message HistoryRecord {
 }
 
 message Db {
-  map<string, Location> frontend_files = 1;
   sint32 next_backend_file = 2;
   repeated HistoryRecord history = 3;
 }

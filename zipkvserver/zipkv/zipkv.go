@@ -50,8 +50,10 @@ type Frontend struct {
 	max    int
 	currDb int
 	db     *Db
+	files  map[string]*Location
 	next   []byte
 	m      sync.RWMutex
+
 }
 
 func (f *Frontend) dbName(i int) string {
@@ -75,6 +77,7 @@ func (f *Frontend) findDb() (int, error) {
 }
 
 func (f *Frontend) setupDb() error {
+	f.files = make(map[string]*Location)
 	i, err := f.findDb()
 	if err != nil {
 		return err
@@ -93,13 +96,21 @@ func (f *Frontend) setupDb() error {
 		if err := proto.Unmarshal(data, f.db); err != nil {
 			return fmt.Errorf("proto.Unmarshal: %s", err)
 		}
+		// Fill f.files based on the f.db.History.
+		for _, record := range f.db.History {
+			switch r := record.Record.(type) {
+			default:
+				panic(fmt.Sprintf("record of type %T", r))
+			case *HistoryRecord_Put:
+				f.files[r.Put.Filename] = r.Put.Location
+			case *HistoryRecord_Delete:
+				delete(f.files, r.Delete.Filename)
+			}
+		}
 	} else {
 		f.db = &Db{
 			NextBackendFile: 0,
 		}
-	}
-	if f.db.FrontendFiles == nil {
-		f.db.FrontendFiles = make(map[string]*Location)
 	}
 	f.currDb = i
 	return nil
@@ -108,7 +119,7 @@ func (f *Frontend) setupDb() error {
 func (f *Frontend) Has(key string) (bool, []byte, error) {
 	f.m.RLock()
 	defer f.m.RUnlock()
-	loc, has := f.db.FrontendFiles[key]
+	loc, has := f.files[key]
 	if has {
 		return true, loc.Metadata, nil
 	} else {
@@ -118,7 +129,7 @@ func (f *Frontend) Has(key string) (bool, []byte, error) {
 
 func (f *Frontend) Get(key string) ([]byte, []byte, error) {
 	f.m.RLock()
-	loc, has := f.db.FrontendFiles[key]
+	loc, has := f.files[key]
 	if !has {
 		f.m.RUnlock()
 		return nil, nil, fmt.Errorf("no key %q", key)
@@ -136,7 +147,7 @@ func (f *Frontend) Get(key string) ([]byte, []byte, error) {
 
 func (f *Frontend) GetAt(key string, offset, size int) ([]byte, []byte, error) {
 	f.m.RLock()
-	loc, has := f.db.FrontendFiles[key]
+	loc, has := f.files[key]
 	if !has {
 		f.m.RUnlock()
 		return nil, nil, fmt.Errorf("no key %q", key)
@@ -163,7 +174,7 @@ func (f *Frontend) GetAt(key string, offset, size int) ([]byte, []byte, error) {
 
 func (f *Frontend) List() ([]Header, error) {
 	var list []Header
-	for key, loc := range f.db.FrontendFiles {
+	for key, loc := range f.files {
 		list = append(list, Header{
 			Key:      key,
 			Metadata: loc.Metadata,
@@ -229,7 +240,7 @@ func (f *Frontend) Put(key string, value, metadata []byte) error {
 		Size:        int32(len(value)),
 		Metadata:    metadata,
 	}
-	f.db.FrontendFiles[key] = loc
+	f.files[key] = loc
 	f.db.History = append(f.db.History, &HistoryRecord{
 		Record: &HistoryRecord_Put{
 			&PutRecord{
@@ -245,7 +256,7 @@ func (f *Frontend) Put(key string, value, metadata []byte) error {
 func (f *Frontend) Link(dstKey, srcKey string, metadata []byte) error {
 	f.m.Lock()
 	defer f.m.Unlock()
-	loc, has := f.db.FrontendFiles[srcKey]
+	loc, has := f.files[srcKey]
 	if !has {
 		return fmt.Errorf("no key %q", srcKey)
 	}
@@ -255,7 +266,7 @@ func (f *Frontend) Link(dstKey, srcKey string, metadata []byte) error {
 		Size:        loc.Size,
 		Metadata:    metadata,
 	}
-	f.db.FrontendFiles[dstKey] = newLoc
+	f.files[dstKey] = newLoc
 	f.db.History = append(f.db.History, &HistoryRecord{
 		Record: &HistoryRecord_Put{
 			&PutRecord{
@@ -270,7 +281,7 @@ func (f *Frontend) Link(dstKey, srcKey string, metadata []byte) error {
 func (f *Frontend) Delete(key string) (metadata []byte, err error) {
 	f.m.Lock()
 	defer f.m.Unlock()
-	loc, has := f.db.FrontendFiles[key]
+	loc, has := f.files[key]
 	if !has {
 		return nil, fmt.Errorf("no key %q", key)
 	}
@@ -281,7 +292,7 @@ func (f *Frontend) Delete(key string) (metadata []byte, err error) {
 			},
 		},
 	})
-	delete(f.db.FrontendFiles, key)
+	delete(f.files, key)
 	return loc.Metadata, nil
 }
 
