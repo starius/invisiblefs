@@ -260,12 +260,9 @@ func (f *Frontend) Link(dstKey, srcKey string, metadata []byte) error {
 	if !has {
 		return fmt.Errorf("no key %q", srcKey)
 	}
-	newLoc := &Location{
-		BackendFile: loc.BackendFile,
-		Offset:      loc.Offset,
-		Size:        loc.Size,
-		Metadata:    metadata,
-	}
+	newLoc := &Location{}
+	*newLoc = *loc
+	newLoc.Metadata = metadata
 	f.files[dstKey] = newLoc
 	f.db.History = append(f.db.History, &HistoryRecord{
 		Record: &HistoryRecord_Put{
