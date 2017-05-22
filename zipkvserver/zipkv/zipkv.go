@@ -31,7 +31,7 @@ type KV interface {
 	Sync() error
 }
 
-func Zip(backend KV, maxValueSize int) (*Frontend, error) {
+func Zip(backend KV, maxValueSize int, rev int) (*Frontend, error) {
 	if maxValueSize <= 0 {
 		return nil, fmt.Errorf("maxValueSize too small")
 	}
@@ -39,7 +39,7 @@ func Zip(backend KV, maxValueSize int) (*Frontend, error) {
 		be:  backend,
 		max: maxValueSize,
 	}
-	if err := fe.setupDb(); err != nil {
+	if err := fe.setupDb(rev); err != nil {
 		return nil, err
 	}
 	return fe, nil
@@ -75,7 +75,7 @@ func (f *Frontend) findDb() (int, error) {
 	return -1, nil
 }
 
-func (f *Frontend) setupDb() error {
+func (f *Frontend) setupDb(rev int) error {
 	f.files = make(map[string]*Location)
 	i, err := f.findDb()
 	if err != nil {
@@ -94,6 +94,13 @@ func (f *Frontend) setupDb() error {
 		f.db = &Db{}
 		if err := proto.Unmarshal(data, f.db); err != nil {
 			return fmt.Errorf("proto.Unmarshal: %s", err)
+		}
+		if rev != -1 {
+			wantLen := rev + 1
+			if wantLen > len(f.db.History) {
+				return fmt.Errorf("rev (%d) is too high", rev)
+			}
+			f.db.History = f.db.History[:wantLen]
 		}
 		// Fill f.files based on the f.db.History.
 		for _, record := range f.db.History {

@@ -33,7 +33,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create fskv object: %s.", err)
 	}
-	fe, err := zipkv.Zip(dfs, *bs)
+	fe, err := zipkv.Zip(dfs, *bs, -1)
 	if err != nil {
 		log.Fatalf("Failed to create zipkv object: %s.", err)
 	}
