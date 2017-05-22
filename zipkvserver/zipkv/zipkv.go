@@ -333,3 +333,27 @@ func (f *Frontend) gunzip(zdata []byte) ([]byte, error) {
 	}
 	return data, err
 }
+
+type Change struct {
+	Put      bool // Otherwise Delete.
+	Filename string
+}
+
+func (f *Frontend) History() []Change {
+	history := make([]Change, len(f.db.History))
+	for i, record := range f.db.History {
+		var change Change
+		switch r := record.Record.(type) {
+		default:
+			panic(fmt.Sprintf("record of type %T", r))
+		case *HistoryRecord_Put:
+			change.Put = true
+			change.Filename = r.Put.Filename
+		case *HistoryRecord_Delete:
+			change.Put = false
+			change.Filename = r.Delete.Filename
+		}
+		history[i] = change
+	}
+	return history
+}
