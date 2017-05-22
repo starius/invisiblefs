@@ -53,7 +53,6 @@ type Frontend struct {
 	files  map[string]*Location
 	next   []byte
 	m      sync.RWMutex
-
 }
 
 func (f *Frontend) dbName(i int) string {
