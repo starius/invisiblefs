@@ -3,6 +3,10 @@
 [S3 compatible][s3c] backend for [S3QL][s3ql] storing files in
 large blocks.
 
+```
+$ go get github.com/starius/invisiblefs/zipkvserver
+```
+
 S3QL is a file system based on FUSE which stores data
 using storage services. It supports multiple backends, in particular
 [S3 compatible][s3c]. This tool is an implementation of such a backend.
