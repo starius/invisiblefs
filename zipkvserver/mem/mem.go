@@ -75,8 +75,10 @@ func (m *Mem) List() (map[string]int, error) {
 func (m *Mem) Put(key string, value, metadata []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	value1 := make([]byte, len(value))
+	copy(value1, value)
 	m.files[key] = file{
-		data:     value,
+		data:     value1,
 		metadata: metadata,
 	}
 	return nil
