@@ -205,7 +205,7 @@ func (f *Frontend) writeNext() error {
 	if err := f.writeDb(); err != nil {
 		return fmt.Errorf("f.writeDb(): %s", err)
 	}
-	f.next = nil
+	f.next = f.next[:0]
 	return nil
 }
 
