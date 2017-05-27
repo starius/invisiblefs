@@ -158,7 +158,7 @@ func (f *Frontend) GetAt(key string, offset, size int) ([]byte, []byte, error) {
 	}
 	f.m.RUnlock()
 	blockname := f.blockName(loc.BackendFile)
-	data, _, err := f.be.GetAt(blockname, offset, size)
+	data, _, err := f.be.GetAt(blockname, offset2, size)
 	return data, loc.Metadata, err
 }
 
