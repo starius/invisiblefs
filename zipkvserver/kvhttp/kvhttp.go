@@ -99,18 +99,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		var list2 []zipkv.Header
-		for _, c := range list {
-			if strings.HasPrefix(c.Key, prefix) {
-				list2 = append(list2, c)
+		list2 := make(map[string]int)
+		for key, size := range list {
+			if strings.HasPrefix(key, prefix) {
+				list2[key] = size
 			}
 		}
 		var buf []string
 		l := len(list2)
 		buf = append(buf, fmt.Sprintf(xmlListHead, l, l))
-		for _, c := range list2 {
-			if strings.HasPrefix(c.Key, prefix) {
-				cs := fmt.Sprintf(xmlListContents, c.Key, c.Size)
+		for key, size := range list {
+			if strings.HasPrefix(key, prefix) {
+				cs := fmt.Sprintf(xmlListContents, key, size)
 				buf = append(buf, cs)
 			}
 		}

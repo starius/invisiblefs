@@ -45,13 +45,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to get list of files: %s.", err)
 	}
-	for _, h := range list {
-		data, metadata, err := fromFe.Get(h.Key)
+	for key, _ := range list {
+		data, metadata, err := fromFe.Get(key)
 		if err != nil {
-			log.Fatalf("Get(%q): %s.", h.Key, err)
+			log.Fatalf("Get(%q): %s.", key, err)
 		}
-		if err := toFe.Put(h.Key, data, metadata); err != nil {
-			log.Fatalf("Put(%q): %s.", h.Key, err)
+		if err := toFe.Put(key, data, metadata); err != nil {
+			log.Fatalf("Put(%q): %s.", key, err)
 		}
 	}
 	if err := toFe.Sync(); err != nil {
