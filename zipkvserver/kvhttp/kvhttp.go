@@ -11,7 +11,7 @@ import (
 
 	"github.com/NebulousLabs/fastrand"
 	"github.com/golang/protobuf/proto"
-	"github.com/starius/invisiblefs/zipkvserver/zipkv"
+	"github.com/starius/invisiblefs/zipkvserver/kv"
 )
 
 //go:generate protoc --proto_path=. --go_out=. metadata.proto
@@ -52,12 +52,12 @@ const (
 )
 
 type Handler struct {
-	kv       zipkv.KV
+	kv       kv.KV
 	baseURL  string
 	maxValue int64
 }
 
-func New(kv zipkv.KV, maxValue int, baseURL string) (*Handler, error) {
+func New(kv kv.KV, maxValue int, baseURL string) (*Handler, error) {
 	return &Handler{
 		kv:       kv,
 		baseURL:  baseURL,

@@ -8,24 +8,14 @@ import (
 	"sync"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/starius/invisiblefs/zipkvserver/kv"
 )
 
 //go:generate protoc --proto_path=. --go_out=. db.proto
 
 const maxDbName = 9
 
-type KV interface {
-	Has(key string) (bool, []byte, error)
-	Get(key string) ([]byte, []byte, error)
-	GetAt(key string, offset, size int) ([]byte, []byte, error)
-	List() (map[string]int, error)
-	Put(key string, value, metadata []byte) error
-	Link(dstKey, srcKey string, metadata []byte) error
-	Delete(key string) (metadata []byte, err error)
-	Sync() error
-}
-
-func Zip(backend KV, maxValueSize int, rev int) (*Frontend, error) {
+func Zip(backend kv.KV, maxValueSize int, rev int) (*Frontend, error) {
 	if maxValueSize <= 0 {
 		return nil, fmt.Errorf("maxValueSize too small")
 	}
@@ -40,7 +30,7 @@ func Zip(backend KV, maxValueSize int, rev int) (*Frontend, error) {
 }
 
 type Frontend struct {
-	be     KV
+	be     kv.KV
 	max    int
 	currDb int
 	db     *Db
