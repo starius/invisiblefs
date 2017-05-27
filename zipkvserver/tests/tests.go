@@ -2,6 +2,7 @@ package tests
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/starius/invisiblefs/zipkvserver/zipkv"
@@ -69,6 +70,45 @@ func TestPutLarge(t *testing.T, kv zipkv.KV) {
 		t.Errorf("kv.GetAt: %s.", err)
 	} else if !bytes.Equal(data, data0s) {
 		t.Errorf("kv.GetAt returned %#v, want %#v.", data, data0s)
+	}
+}
+
+func TestPutMany(t *testing.T, kv zipkv.KV) {
+	n := 100 * 1000
+	for i := 0; i < n; i++ {
+		key := fmt.Sprintf("file%d", i)
+		data0 := make([]byte, 1000)
+		// Put numbers to the buffer.
+		for j := 0; j < len(data0); j++ {
+			data0[j] = byte((i + j) % 256)
+		}
+		if err := kv.Put(key, data0, nil); err != nil {
+			t.Fatalf("kv.Put(%q): %s.", key, err)
+		}
+	}
+	for i := 0; i < n; i++ {
+		key := fmt.Sprintf("file%d", i)
+		data0 := make([]byte, 1000)
+		// Put numbers to the buffer.
+		for j := 0; j < len(data0); j++ {
+			data0[j] = byte((i + j) % 256)
+		}
+		if has, _, err := kv.Has(key); err != nil {
+			t.Errorf("kv.Has: %s.", err)
+		} else if has != true {
+			t.Errorf("kv.Has returned %#v, want true.", has)
+		}
+		if data, _, err := kv.Get(key); err != nil {
+			t.Errorf("kv.Get: %s.", err)
+		} else if !bytes.Equal(data, data0) {
+			t.Errorf("kv.Get returned %#v, want %#v.", data, data0)
+		}
+		data0s := data0[100 : 100+200]
+		if data, _, err := kv.GetAt(key, 100, 200); err != nil {
+			t.Errorf("kv.GetAt: %s.", err)
+		} else if !bytes.Equal(data, data0s) {
+			t.Errorf("kv.GetAt returned %#v, want %#v.", data, data0s)
+		}
 	}
 }
 

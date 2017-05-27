@@ -30,6 +30,14 @@ func TestPutLarge(t *testing.T) {
 	tests.TestPutLarge(t, kv)
 }
 
+func TestPutMany(t *testing.T) {
+	kv, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create mem: %s.", err)
+	}
+	tests.TestPutMany(t, kv)
+}
+
 func TestDelete(t *testing.T) {
 	kv, err := New()
 	if err != nil {

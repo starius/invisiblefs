@@ -37,6 +37,16 @@ func TestPutLarge(t *testing.T) {
 	tests.TestPutLarge(t, kv)
 }
 
+func TestPutMany(t *testing.T) {
+	dir := os.TempDir()
+	defer os.RemoveAll(dir)
+	kv, err := New(dir)
+	if err != nil {
+		t.Fatalf("Failed to create fskv: %s.", err)
+	}
+	tests.TestPutMany(t, kv)
+}
+
 func TestDelete(t *testing.T) {
 	dir := os.TempDir()
 	defer os.RemoveAll(dir)
