@@ -73,8 +73,7 @@ func TestPutLarge(t *testing.T, k kv.KV) {
 	}
 }
 
-func TestPutMany(t *testing.T, k kv.KV) {
-	n := 100 * 1000
+func TestPutMany1(t *testing.T, k kv.KV, n int) {
 	for i := 0; i < n; i++ {
 		key := fmt.Sprintf("file%d", i)
 		data0 := make([]byte, 1000)
@@ -86,6 +85,9 @@ func TestPutMany(t *testing.T, k kv.KV) {
 			t.Fatalf("k.Put(%q): %s.", key, err)
 		}
 	}
+}
+
+func TestPutMany2(t *testing.T, k kv.KV, n int) {
 	for i := 0; i < n; i++ {
 		key := fmt.Sprintf("file%d", i)
 		data0 := make([]byte, 1000)
@@ -110,6 +112,12 @@ func TestPutMany(t *testing.T, k kv.KV) {
 			t.Errorf("k.GetAt returned %#v, want %#v.", data, data0s)
 		}
 	}
+}
+
+func TestPutMany(t *testing.T, k kv.KV) {
+	n := 100 * 1000
+	TestPutMany1(t, k, n)
+	TestPutMany2(t, k, n)
 }
 
 func TestDelete(t *testing.T, k kv.KV) {
