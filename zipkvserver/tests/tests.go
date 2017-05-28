@@ -115,7 +115,7 @@ func TestPutMany2(t *testing.T, k kv.KV, n int) {
 }
 
 func TestPutMany(t *testing.T, k kv.KV) {
-	n := 100 * 1000
+	n := 10 * 1000
 	TestPutMany1(t, k, n)
 	TestPutMany2(t, k, n)
 }
