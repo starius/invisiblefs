@@ -1,20 +1,18 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
-	"mime/multipart"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/starius/invisiblefs/siaform/siaclient"
 )
 
 var (
@@ -22,7 +20,7 @@ var (
 	siaAddr    = flag.String("sia-addr", "127.0.0.1:9980", "Sia API addrer.")
 	sectorSize = flag.Int("sector-size", 4*1024*1024, "Sia block size")
 
-	client = &http.Client{}
+	sc *siaclient.SiaClient
 )
 
 const indexPage = `
@@ -49,43 +47,15 @@ type contractsJson struct {
 }
 
 func selectContract() (string, error) {
-	req := &http.Request{
-		Method: "GET",
-		URL: &url.URL{
-			Scheme: "http",
-			Host:   *siaAddr,
-			Path:   "/renter/contracts",
-		},
-		Header: map[string][]string{
-			"User-Agent": {"Sia-Agent"},
-		},
-	}
-	resp, err := client.Do(req)
+	contracts, err := sc.Contracts()
 	if err != nil {
-		return "", fmt.Errorf("client.Do: %v", err)
+		return "", err
 	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("ioutil.ReadAll(resp.Body): %v", err)
-	}
-	var cj contractsJson
-	if err := json.Unmarshal(body, &cj); err != nil {
-		return "", fmt.Errorf("json.Unmarshal(body): %v", err)
-	}
-	if cj.Message != "" {
-		return "", fmt.Errorf("cj.Message: %s", err)
-	}
-	if len(cj.Contracts) == 0 {
+	if len(contracts) == 0 {
 		return "", fmt.Errorf("no contracts")
 	}
-	n := rand.Intn(len(cj.Contracts))
-	return cj.Contracts[n].Id, nil
-}
-
-type writeJson struct {
-	SectorRoot string `json:"sector_root"`
-	Message    string
+	n := rand.Intn(len(contracts))
+	return contracts[n], nil
 }
 
 func h(res http.ResponseWriter, req *http.Request) {
@@ -100,29 +70,10 @@ func h(res http.ResponseWriter, req *http.Request) {
 		}
 		contractID := parts[1]
 		sectorRoot := parts[2]
-		path2 := "/renter/read/" + contractID + "/" + sectorRoot
-		req := &http.Request{
-			Method: "GET",
-			URL: &url.URL{
-				Scheme: "http",
-				Host:   *siaAddr,
-				Path:   path2,
-			},
-			Header: map[string][]string{
-				"User-Agent": {"Sia-Agent"},
-			},
-		}
-		resp, err := client.Do(req)
+		body, err := sc.Read(contractID, sectorRoot)
 		if err != nil {
-			log.Printf("client.Do: %v.", err)
-			res.WriteHeader(http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			log.Printf("ioutil.ReadAll(resp.Body): %v.", err)
-			res.WriteHeader(http.StatusBadGateway)
+			log.Printf("sc.Read(%q, %q): %v.", contractID, sectorRoot, err)
+			res.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		if len(body) < 4 {
@@ -166,53 +117,13 @@ func h(res http.ResponseWriter, req *http.Request) {
 			res.WriteHeader(http.StatusBadGateway)
 			return
 		}
-		body2 := &bytes.Buffer{}
-		writer := multipart.NewWriter(body2)
-		part, err := writer.CreateFormFile("data", "filename")
+		sectorRoot, err := sc.Write(contractID, body)
 		if err != nil {
-			log.Printf("writer.CreateFormFile: %v.", err)
+			log.Printf("sc.Write(%q, body): %v.", contractID, err)
 			res.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		if _, err := part.Write(body); err != nil {
-			log.Printf("part.Write(body): %v.", err)
-			res.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if err = writer.Close(); err != nil {
-			log.Printf("writer.Close: %v.", err)
-			res.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		url := "http://" + *siaAddr + "/renter/write/" + contractID
-		req, err := http.NewRequest("POST", url, body2)
-		if err != nil {
-			log.Printf("http.NewRequest: %v.", err)
-			res.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		req.Header.Set("User-Agent", "Sia-Agent")
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-		resp, err := client.Do(req)
-		defer resp.Body.Close()
-		body3, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			log.Printf("ioutil.ReadAll(resp.Body): %v.", err)
-			res.WriteHeader(http.StatusBadGateway)
-			return
-		}
-		var wr writeJson
-		if err := json.Unmarshal(body3, &wr); err != nil {
-			log.Printf("json.Unmarshal(body3): %v.", err)
-			res.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if wr.Message != "" {
-			log.Printf("wr.Message: %s.", wr.Message)
-			res.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		path3 := "/" + contractID + "/" + wr.SectorRoot + "/" + filepath.Base(fh.Filename)
+		path3 := "/" + contractID + "/" + sectorRoot + "/" + filepath.Base(fh.Filename)
 		http.Redirect(res, req, path3, http.StatusFound)
 		return
 	}
@@ -220,7 +131,11 @@ func h(res http.ResponseWriter, req *http.Request) {
 
 func main() {
 	flag.Parse()
-	// Run HTTP server.
+	var err error
+	sc, err = siaclient.New(*siaAddr, &http.Client{})
+	if err != nil {
+		log.Fatalf("siaclient.New: %v.", err)
+	}
 	s := &http.Server{
 		Addr:           *httpAddr,
 		ReadTimeout:    10 * time.Second,
