@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package managerdb;
+
+message Db {
+  map<sint64, Sector> primary_sectors = 1;
+  map<sint64, Sector> ecc_sectors = 2;
+  repeated EccSet ecc_sets = 3;
+  sint32 primary_sectors_in_group = 4;
+  sint32 ecc_sectors_in_group = 5;
+}
+
+message Sector {
+  // If uploaded.
+  bytes contract = 1;
+  bytes merkle_root = 2;
+
+  // If not uploaded.
+  bytes data = 3;
+}
+
+message EccSet {
+  repeated sint64 data_sector_ids = 1;
+  repeated sint64 parity_sector_ids = 2;
+}
