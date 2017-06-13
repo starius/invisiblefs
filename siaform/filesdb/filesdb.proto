@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package filesdb;
+
+message Db {
+  map<string, File> files = 1;
+  sint32 sector_size = 2;
+}
+
+message File {
+  repeated Piece pieces = 1;
+  sint64 size = 2;
+}
+
+message Piece {
+  sint64 sector_id = 1;
+
+  // Only if not whole sector.
+  bytes sha256 = 2;
+  sint32 offset = 3;
+  sint32 length = 4;
+}
