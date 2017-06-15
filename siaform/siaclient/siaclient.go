@@ -96,6 +96,8 @@ type writeJson struct {
 }
 
 func (s *SiaClient) Write(contractID string, data []byte) (string, error) {
+	fmt.Printf("SiaClient.Write(%q) start\n", contractID)
+	defer fmt.Printf("SiaClient.Write(%q) stop\n", contractID)
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	part, err := writer.CreateFormFile("data", "filename")
