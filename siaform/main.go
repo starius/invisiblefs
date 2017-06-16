@@ -1,17 +1,20 @@
 package main
 
 import (
-	"encoding/binary"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/starius/invisiblefs/siaform/files"
+	"github.com/starius/invisiblefs/siaform/manager"
 	"github.com/starius/invisiblefs/siaform/siaclient"
 )
 
@@ -19,8 +22,11 @@ var (
 	httpAddr   = flag.String("http-addr", "127.0.0.1:23760", "HTTP server addrer.")
 	siaAddr    = flag.String("sia-addr", "127.0.0.1:9980", "Sia API addrer.")
 	sectorSize = flag.Int("sector-size", 4*1024*1024, "Sia block size")
+	dataDir    = flag.String("data-dir", "data-dir", "Directory to store databases")
 
 	sc *siaclient.SiaClient
+	mn *manager.Manager
+	fi *files.Files
 )
 
 const indexPage = `
@@ -28,7 +34,7 @@ const indexPage = `
 <body>
 
 <form action="/upload" method="post" enctype="multipart/form-data">
-    Select file to upload (max %d bytes):
+    Select file to upload:
     <br>
     <input type="file" name="data" id="data">
     <br>
@@ -39,107 +45,148 @@ const indexPage = `
 </html>
 `
 
-type contractsJson struct {
-	Contracts []struct {
-		Id string
-	}
-	Message string
-}
-
-func selectContract() (string, error) {
-	contracts, err := sc.Contracts()
-	if err != nil {
-		return "", err
-	}
-	if len(contracts) == 0 {
-		return "", fmt.Errorf("no contracts")
-	}
-	n := rand.Intn(len(contracts))
-	return contracts[n], nil
-}
-
 func h(res http.ResponseWriter, req *http.Request) {
 	if req.Method == "GET" && req.URL.Path == "/" {
-		res.Write([]byte(fmt.Sprintf(indexPage, *sectorSize)))
+		res.Write([]byte(indexPage))
 		return
 	} else if req.Method == "GET" {
 		parts := strings.Split(req.URL.Path, "/")
-		if len(parts) < 3 {
+		if len(parts) < 2 {
 			res.WriteHeader(http.StatusNotFound)
 			return
 		}
-		contractID := parts[1]
-		sectorRoot := parts[2]
-		body, err := sc.Read(contractID, sectorRoot)
+		name := parts[1]
+		f, err := fi.Open(name)
 		if err != nil {
-			log.Printf("sc.Read(%q, %q): %v.", contractID, sectorRoot, err)
+			log.Printf("fi.Open(%q): %v.", name, err)
 			res.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		if len(body) < 4 {
-			log.Printf("len(body): %d.", len(body))
-			res.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		length := binary.LittleEndian.Uint32(body[:4])
-		if len(body) < int(4+length) {
-			log.Printf("len(body): %d. length: %d.", len(body), length)
-			res.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		data := body[4 : 4+length]
-		res.Write(data)
+		log.Printf("size=%d", f.File.Size)
+		http.ServeContent(res, req, name, time.Time{}, f)
 		return
 	} else if req.Method == "POST" && req.URL.Path == "/upload" {
-		f, fh, err := req.FormFile("data")
+		log.Printf("Started uploading\n")
+		name := fmt.Sprintf("%d", rand.Int())
+		f, err := fi.Create(name)
 		if err != nil {
-			log.Printf("req.FormFile: %v.", err)
-			res.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		data, err := ioutil.ReadAll(f)
-		if err != nil {
-			log.Printf("ioutil.ReadAll(f): %v.", err)
-			res.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if len(data)+4 > *sectorSize {
-			res.WriteHeader(http.StatusRequestEntityTooLarge)
-			return
-		}
-		body := make([]byte, 4)
-		binary.LittleEndian.PutUint32(body, uint32(len(data)))
-		body = append(body, data...)
-		body = append(body, make([]byte, *sectorSize-len(body))...)
-		contractID, err := selectContract()
-		if err != nil {
-			log.Printf("selectContract: %v.", err)
-			res.WriteHeader(http.StatusBadGateway)
-			return
-		}
-		sectorRoot, err := sc.Write(contractID, body)
-		if err != nil {
-			log.Printf("sc.Write(%q, body): %v.", contractID, err)
+			log.Printf("fi.Create(%q): %v.", name, err)
 			res.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		path3 := "/" + contractID + "/" + sectorRoot + "/" + filepath.Base(fh.Filename)
-		http.Redirect(res, req, path3, http.StatusFound)
+		mr, err := req.MultipartReader()
+		if err != nil {
+			log.Printf("req.MultipartReader: %v.", err)
+			res.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Printf("mr.NextPart: %v", err)
+				return
+			}
+			if part.FormName() == "data" {
+				for {
+					buf := make([]byte, *sectorSize)
+					n, err := io.ReadFull(part, buf)
+					buf1 := buf
+					theLast := false
+					if err == io.ErrUnexpectedEOF {
+						buf1 = buf[:n]
+						theLast = true
+					} else if err != nil {
+						log.Printf("io.ReadFull: %v.", err)
+						res.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					if _, err := f.Write(buf1); err != nil {
+						log.Printf("f.Write: %v.", err)
+						res.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					if theLast {
+						break
+					}
+				}
+			}
+			if err := part.Close(); err != nil {
+				log.Printf("part.Close: %v.", err)
+				res.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		}
+		res.Write([]byte(fmt.Sprintf("<a href=/%s>Link</a>", name)))
 		return
 	}
 }
 
 func main() {
+	rand.Seed(time.Now().UnixNano())
 	flag.Parse()
+	mnFile := filepath.Join(*dataDir, "manager.db")
+	fiFile := filepath.Join(*dataDir, "files.db")
 	var err error
 	sc, err = siaclient.New(*siaAddr, &http.Client{})
 	if err != nil {
 		log.Fatalf("siaclient.New: %v.", err)
 	}
+	if _, err := os.Stat(mnFile); !os.IsNotExist(err) {
+		data, err := ioutil.ReadFile(mnFile)
+		if err != nil {
+			log.Fatalf("ioutil.ReadFile(%q): %v.", mnFile, err)
+		}
+		mn, err = manager.Load(data, sc)
+		if err != nil {
+			log.Fatalf("manager.Load: %v.", err)
+		}
+	} else {
+		mn, err = manager.New(1, 0, sc)
+		if err != nil {
+			log.Fatalf("manager.New: %v.", err)
+		}
+	}
+	if _, err := os.Stat(fiFile); !os.IsNotExist(err) {
+		data, err := ioutil.ReadFile(fiFile)
+		if err != nil {
+			log.Fatalf("ioutil.ReadFile(%q): %v.", fiFile, err)
+		}
+		fi, err = files.Load(data, mn)
+		if err != nil {
+			log.Fatalf("files.Load: %v.", err)
+		}
+	} else {
+		fi, err = files.New(*sectorSize, mn)
+		if err != nil {
+			log.Fatalf("files.New: %v.", err)
+		}
+	}
+	go func() {
+	begin:
+		time.Sleep(10 * time.Second)
+		data, err := mn.DumpDb()
+		if err != nil {
+			log.Fatalf("mn.DumpDb: %v.", err)
+		}
+		if err := ioutil.WriteFile(mnFile, data, 0600); err != nil {
+			log.Fatalf("ioutil.WriteFile(%q, ...): %v.", mnFile, err)
+		}
+		data, err = fi.DumpDb()
+		if err != nil {
+			log.Fatalf("fi.DumpDb: %v.", err)
+		}
+		if err := ioutil.WriteFile(fiFile, data, 0600); err != nil {
+			log.Fatalf("ioutil.WriteFile(%q, ...): %v.", fiFile, err)
+		}
+		goto begin
+	}()
 	s := &http.Server{
 		Addr:           *httpAddr,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
+		ReadTimeout:    1000 * time.Second,
+		WriteTimeout:   1000 * time.Second,
 		MaxHeaderBytes: 1 << 16,
 	}
 	s.Handler = http.HandlerFunc(h)
