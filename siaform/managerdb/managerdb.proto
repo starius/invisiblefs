@@ -3,11 +3,11 @@ syntax = "proto3";
 package managerdb;
 
 message Db {
-  map<sint64, Sector> primary_sectors = 1;
-  map<sint64, Sector> ecc_sectors = 2;
-  repeated EccSet ecc_sets = 3;
-  sint32 primary_sectors_in_group = 4;
-  sint32 ecc_sectors_in_group = 5;
+  map<sint64, Sector> sectors = 1;
+  repeated Set sets = 2;
+  sint32 ndata = 3;
+  sint32 nparity = 4;
+  sint32 sector_size = 5;
 }
 
 message Sector {
@@ -19,7 +19,7 @@ message Sector {
   bytes data = 3;
 }
 
-message EccSet {
-  repeated sint64 data_sector_ids = 1;
-  repeated sint64 parity_sector_ids = 2;
+message Set {
+  repeated sint64 data_ids = 1;
+  repeated sint64 parity_ids = 2;
 }

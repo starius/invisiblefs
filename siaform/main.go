@@ -21,6 +21,8 @@ import (
 var (
 	httpAddr   = flag.String("http-addr", "127.0.0.1:23760", "HTTP server addrer.")
 	siaAddr    = flag.String("sia-addr", "127.0.0.1:9980", "Sia API addrer.")
+	ndata      = flag.Int("ndata", 10, "Number of data sectors in a group")
+	nparity    = flag.Int("nparity", 10, "Number of parity sectors in a group")
 	sectorSize = flag.Int("sector-size", 4*1024*1024, "Sia block size")
 	dataDir    = flag.String("data-dir", "data-dir", "Directory to store databases")
 
@@ -144,7 +146,7 @@ func main() {
 			log.Fatalf("manager.Load: %v.", err)
 		}
 	} else {
-		mn, err = manager.New(1, 0, sc)
+		mn, err = manager.New(*ndata, *nparity, *sectorSize, sc)
 		if err != nil {
 			log.Fatalf("manager.New: %v.", err)
 		}
@@ -163,6 +165,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("files.New: %v.", err)
 		}
+	}
+	if err := mn.Start(); err != nil {
+		log.Fatalf("manager.Start: %v.", err)
 	}
 	go func() {
 	begin:
