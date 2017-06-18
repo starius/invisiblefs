@@ -116,6 +116,7 @@ func Load(zdump []byte, sc *siaclient.SiaClient) (*Manager, error) {
 			set1.ParitySectors = append(set1.ParitySectors, sector)
 			sector.set = set1
 		}
+		m.sets = append(m.sets, set1)
 	}
 	return m, nil
 }
