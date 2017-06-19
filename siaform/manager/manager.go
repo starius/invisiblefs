@@ -254,7 +254,9 @@ func (m *Manager) uploadPending() {
 	m.mu.Lock()
 	for _, sector := range m.sectors {
 		if sector.set == nil {
-			sectors = append(sectors, sector)
+			if sector.Data != nil && sector.isPrimary {
+				sectors = append(sectors, sector)
+			}
 		} else if len(sector.Contract) == 0 {
 			sets[sector.set] = struct{}{}
 		}
