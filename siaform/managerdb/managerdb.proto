@@ -8,6 +8,7 @@ message Db {
   sint32 ndata = 3;
   sint32 nparity = 4;
   sint32 sector_size = 5;
+  map<string, Latency> reads_history = 6;
 }
 
 message Sector {
@@ -22,4 +23,9 @@ message Sector {
 message Set {
   repeated sint64 data_ids = 1;
   repeated sint64 parity_ids = 2;
+}
+
+message Latency {
+  sint64 total_ms = 1;
+  sint64 count = 2;
 }

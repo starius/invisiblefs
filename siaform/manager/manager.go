@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 
@@ -50,6 +51,9 @@ type Manager struct {
 
 	siaclient *siaclient.SiaClient
 
+	readsHistory   map[string]*managerdb.Latency
+	readsHistoryMu sync.Mutex
+
 	ndata, nparity, sectorSize int
 
 	dataChan chan *Sector
@@ -59,15 +63,16 @@ type Manager struct {
 
 func New(ndata, nparity, sectorSize int, sc *siaclient.SiaClient) (*Manager, error) {
 	return &Manager{
-		sectors:    make(map[int64]*Sector),
-		next:       1,
-		ndata:      ndata,
-		nparity:    nparity,
-		sectorSize: sectorSize,
-		siaclient:  sc,
-		dataChan:   make(chan *Sector, 100),
-		setChan:    make(chan *Set, 100),
-		stopChan:   make(chan struct{}),
+		sectors:      make(map[int64]*Sector),
+		next:         1,
+		ndata:        ndata,
+		nparity:      nparity,
+		sectorSize:   sectorSize,
+		siaclient:    sc,
+		readsHistory: make(map[string]*managerdb.Latency),
+		dataChan:     make(chan *Sector, 100),
+		setChan:      make(chan *Set, 100),
+		stopChan:     make(chan struct{}),
 	}, nil
 }
 
@@ -81,14 +86,18 @@ func Load(zdump []byte, sc *siaclient.SiaClient) (*Manager, error) {
 		return nil, fmt.Errorf("proto.Unmarshal(dump, db): %v", err)
 	}
 	m := &Manager{
-		sectors:    make(map[int64]*Sector),
-		siaclient:  sc,
-		dataChan:   make(chan *Sector, 100),
-		setChan:    make(chan *Set, 100),
-		stopChan:   make(chan struct{}),
-		ndata:      int(db.Ndata),
-		nparity:    int(db.Nparity),
-		sectorSize: int(db.SectorSize),
+		sectors:      make(map[int64]*Sector),
+		siaclient:    sc,
+		readsHistory: db.ReadsHistory,
+		dataChan:     make(chan *Sector, 100),
+		setChan:      make(chan *Set, 100),
+		stopChan:     make(chan struct{}),
+		ndata:        int(db.Ndata),
+		nparity:      int(db.Nparity),
+		sectorSize:   int(db.SectorSize),
+	}
+	if m.readsHistory == nil {
+		m.readsHistory = make(map[string]*managerdb.Latency)
 	}
 	maxI := int64(0)
 	for i, sector := range db.Sectors {
@@ -123,10 +132,11 @@ func Load(zdump []byte, sc *siaclient.SiaClient) (*Manager, error) {
 
 func (m *Manager) DumpDb() ([]byte, error) {
 	db := &managerdb.Db{
-		Sectors:    make(map[int64]*managerdb.Sector),
-		Ndata:      int32(m.ndata),
-		Nparity:    int32(m.nparity),
-		SectorSize: int32(m.sectorSize),
+		Sectors:      make(map[int64]*managerdb.Sector),
+		Ndata:        int32(m.ndata),
+		Nparity:      int32(m.nparity),
+		SectorSize:   int32(m.sectorSize),
+		ReadsHistory: m.readsHistory,
 	}
 	m.mu.Lock()
 	for i, sector := range m.sectors {
@@ -178,7 +188,23 @@ func (m *Manager) ReadSector(i int64) ([]byte, error) {
 	if data != nil {
 		return data, nil
 	}
-	return m.siaclient.Read(contract, sectorRoot)
+	log.Printf("Loading data from contract %s", contract)
+	t1 := time.Now()
+	data, err = m.siaclient.Read(contract, sectorRoot)
+	if err != nil {
+		return nil, err
+	}
+	latency := time.Since(t1)
+	m.readsHistoryMu.Lock()
+	l, has := m.readsHistory[contract]
+	if !has {
+		l = &managerdb.Latency{}
+		m.readsHistory[contract] = l
+	}
+	l.TotalMs += latency.Nanoseconds() / 1e6
+	l.Count++
+	m.readsHistoryMu.Unlock()
+	return data, err
 }
 
 func (m *Manager) ReadSectorAt(i int64, offset, length int) ([]byte, error) {
@@ -309,6 +335,17 @@ func (m *Manager) uploadSet(set *Set) error {
 		}
 	}
 	n := len(all) - len(used)
+	var dataSectors, paritySectors []*Sector
+	for _, sector := range all {
+		if len(sector.Contract) != 0 {
+			continue
+		}
+		if sector.isPrimary {
+			dataSectors = append(dataSectors, sector)
+		} else {
+			paritySectors = append(paritySectors, sector)
+		}
+	}
 	contracts, err := m.siaclient.Contracts()
 	if err != nil {
 		return fmt.Errorf("siaclient.Contracts: %v.", err)
@@ -322,16 +359,33 @@ func (m *Manager) uploadSet(set *Set) error {
 	if len(contracts1) < n {
 		return fmt.Errorf("too few contracts")
 	}
-	var chosen []string
-	for _, i := range rand.Perm(len(contracts1))[:n] {
-		chosen = append(chosen, contracts1[i])
-	}
-	for _, sector := range all {
-		if len(sector.Contract) != 0 {
-			continue
+	m.readsHistoryMu.Lock()
+	sort.Slice(contracts1, func(i, j int) bool {
+		var iavg, javg int64
+		il, has := m.readsHistory[contracts1[i]]
+		if has {
+			iavg = il.TotalMs / il.Count
 		}
-		contract := chosen[0]
-		chosen = chosen[1:]
+		jl, has := m.readsHistory[contracts1[j]]
+		if has {
+			javg = jl.TotalMs / jl.Count
+		}
+		return iavg < javg
+	})
+	m.readsHistoryMu.Unlock()
+	// Upload data sectors to fastest contracts.
+	for j, i := range rand.Perm(len(dataSectors)) {
+		contract := contracts1[i]
+		sector := dataSectors[j]
+		if err := m.uploadSector(sector, contract); err != nil {
+			return fmt.Errorf("m.uploadSector: %v", err)
+		}
+	}
+	// Upload parity sectors to random subset of other contracts.
+	contracts1 = contracts1[len(dataSectors):]
+	for j, i := range rand.Perm(len(contracts1))[:len(paritySectors)] {
+		contract := contracts1[i]
+		sector := paritySectors[j]
 		if err := m.uploadSector(sector, contract); err != nil {
 			return fmt.Errorf("m.uploadSector: %v", err)
 		}
