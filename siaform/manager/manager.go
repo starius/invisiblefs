@@ -33,9 +33,9 @@ type Sector struct {
 	MerkleRoot string
 	Data       []byte
 
-	isPrimary bool
-	set       *Set
-	id        int64
+	isData bool
+	set    *Set
+	id     int64
 }
 
 type Set struct {
@@ -118,7 +118,7 @@ func Load(zdump []byte, sc *siaclient.SiaClient) (*Manager, error) {
 			sector := m.sectors[i]
 			set1.DataSectors = append(set1.DataSectors, sector)
 			sector.set = set1
-			sector.isPrimary = true
+			sector.isData = true
 		}
 		for _, i := range set.ParityIds {
 			sector := m.sectors[i]
@@ -176,8 +176,8 @@ func (m *Manager) ReadSector(i int64) ([]byte, error) {
 		if !has {
 			return "", "", nil, fmt.Errorf("No such sector: %d", i)
 		}
-		if !sector.isPrimary {
-			return "", "", nil, fmt.Errorf("The sector %d is not primary", i)
+		if !sector.isData {
+			return "", "", nil, fmt.Errorf("The sector %d is not data", i)
 		}
 		return sector.Contract, sector.MerkleRoot, sector.Data, nil
 	}
@@ -229,9 +229,9 @@ func (m *Manager) AddSector(data []byte) (int64, error) {
 	i := m.next
 	m.next++
 	sector := &Sector{
-		Data:      data,
-		id:        i,
-		isPrimary: true,
+		Data:   data,
+		id:     i,
+		isData: true,
 	}
 	m.sectors[i] = sector
 	m.mu.Unlock()
@@ -280,7 +280,7 @@ func (m *Manager) uploadPending() {
 	m.mu.Lock()
 	for _, sector := range m.sectors {
 		if sector.set == nil {
-			if sector.Data != nil && sector.isPrimary {
+			if sector.Data != nil && sector.isData {
 				sectors = append(sectors, sector)
 			}
 		} else if len(sector.Contract) == 0 {
@@ -340,7 +340,7 @@ func (m *Manager) uploadSet(set *Set) error {
 		if len(sector.Contract) != 0 {
 			continue
 		}
-		if sector.isPrimary {
+		if sector.isData {
 			dataSectors = append(dataSectors, sector)
 		} else {
 			paritySectors = append(paritySectors, sector)
