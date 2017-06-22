@@ -42,6 +42,11 @@ type Set struct {
 	DataSectors, ParitySectors []*Sector
 }
 
+type Cipher interface {
+	Encrypt(sectorID int64, data []byte)
+	Decrypt(sectorID int64, data []byte)
+}
+
 type Manager struct {
 	sectors map[int64]*Sector
 	sets    []*Set
@@ -50,6 +55,7 @@ type Manager struct {
 	mu      sync.Mutex
 
 	siaclient *siaclient.SiaClient
+	cipher    Cipher
 
 	readsHistory   map[string]*managerdb.Latency
 	readsHistoryMu sync.Mutex
@@ -61,7 +67,7 @@ type Manager struct {
 	stopChan chan struct{}
 }
 
-func New(ndata, nparity, sectorSize int, sc *siaclient.SiaClient) (*Manager, error) {
+func New(ndata, nparity, sectorSize int, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error) {
 	return &Manager{
 		sectors:      make(map[int64]*Sector),
 		next:         1,
@@ -69,6 +75,7 @@ func New(ndata, nparity, sectorSize int, sc *siaclient.SiaClient) (*Manager, err
 		nparity:      nparity,
 		sectorSize:   sectorSize,
 		siaclient:    sc,
+		cipher:       cipher,
 		readsHistory: make(map[string]*managerdb.Latency),
 		dataChan:     make(chan *Sector, 100),
 		setChan:      make(chan *Set, 100),
@@ -76,7 +83,7 @@ func New(ndata, nparity, sectorSize int, sc *siaclient.SiaClient) (*Manager, err
 	}, nil
 }
 
-func Load(zdump []byte, sc *siaclient.SiaClient) (*Manager, error) {
+func Load(zdump []byte, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error) {
 	dump, err := gzip.Gunzip(zdump)
 	if err != nil {
 		return nil, fmt.Errorf("gzip.Gunzip(zdump): %v", err)
@@ -88,6 +95,7 @@ func Load(zdump []byte, sc *siaclient.SiaClient) (*Manager, error) {
 	m := &Manager{
 		sectors:      make(map[int64]*Sector),
 		siaclient:    sc,
+		cipher:       cipher,
 		readsHistory: db.ReadsHistory,
 		dataChan:     make(chan *Sector, 100),
 		setChan:      make(chan *Set, 100),
@@ -204,6 +212,7 @@ func (m *Manager) ReadSector(i int64) ([]byte, error) {
 	l.TotalMs += latency.Nanoseconds() / 1e6
 	l.Count++
 	m.readsHistoryMu.Unlock()
+	m.cipher.Decrypt(i, data)
 	return data, err
 }
 
@@ -428,7 +437,10 @@ func (m *Manager) addParity(set *Set) error {
 }
 
 func (m *Manager) uploadSector(sector *Sector, contract string) error {
-	sectorRoot, err := m.siaclient.Write(contract, sector.Data)
+	data := make([]byte, m.sectorSize)
+	copy(data, sector.Data)
+	m.cipher.Encrypt(sector.id, data)
+	sectorRoot, err := m.siaclient.Write(contract, data)
 	if err != nil {
 		return fmt.Errorf("siaclient.Write: %v.", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/starius/invisiblefs/siaform/crypto"
 	"github.com/starius/invisiblefs/siaform/files"
 	"github.com/starius/invisiblefs/siaform/manager"
 	"github.com/starius/invisiblefs/siaform/siaclient"
@@ -25,11 +26,22 @@ var (
 	nparity    = flag.Int("nparity", 10, "Number of parity sectors in a group")
 	sectorSize = flag.Int("sector-size", 4*1024*1024, "Sia block size")
 	dataDir    = flag.String("data-dir", "data-dir", "Directory to store databases")
+	keyFile    = flag.String("key-file", "", "File with key ('disable' to disable encryption")
 
 	sc *siaclient.SiaClient
+	ci manager.Cipher
 	mn *manager.Manager
 	fi *files.Files
 )
+
+type NoopCipher struct {
+}
+
+func (n *NoopCipher) Encrypt(sectorID int64, data []byte) {
+}
+
+func (n *NoopCipher) Decrypt(sectorID int64, data []byte) {
+}
 
 const indexPage = `
 <html>
@@ -129,6 +141,20 @@ func h(res http.ResponseWriter, req *http.Request) {
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	flag.Parse()
+	if *keyFile == "" {
+		log.Fatalf("Specify -key-file")
+	} else if *keyFile == "disable" {
+		ci = &NoopCipher{}
+	} else {
+		key, err := ioutil.ReadFile(*keyFile)
+		if err != nil {
+			log.Fatalf("ioutil.ReadFile(%q): %v.", *keyFile, err)
+		}
+		ci, err = crypto.New(key)
+		if err != nil {
+			log.Fatalf("crypto.New: %v.", err)
+		}
+	}
 	mnFile := filepath.Join(*dataDir, "manager.db")
 	fiFile := filepath.Join(*dataDir, "files.db")
 	var err error
@@ -141,12 +167,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("ioutil.ReadFile(%q): %v.", mnFile, err)
 		}
-		mn, err = manager.Load(data, sc)
+		mn, err = manager.Load(data, sc, ci)
 		if err != nil {
 			log.Fatalf("manager.Load: %v.", err)
 		}
 	} else {
-		mn, err = manager.New(*ndata, *nparity, *sectorSize, sc)
+		mn, err = manager.New(*ndata, *nparity, *sectorSize, sc, ci)
 		if err != nil {
 			log.Fatalf("manager.New: %v.", err)
 		}
