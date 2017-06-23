@@ -176,32 +176,23 @@ func (m *Manager) DumpDb() ([]byte, error) {
 	return zdump, nil
 }
 
-func (m *Manager) ReadSector(i int64) ([]byte, error) {
-	f := func() (string, string, []byte, error) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		sector, has := m.sectors[i]
-		if !has {
-			return "", "", nil, fmt.Errorf("No such sector: %d", i)
-		}
-		if !sector.isData {
-			return "", "", nil, fmt.Errorf("The sector %d is not data", i)
-		}
-		return sector.Contract, sector.MerkleRoot, sector.Data, nil
+func (m *Manager) getSector(i int64) (string, string, []byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sector, has := m.sectors[i]
+	if !has {
+		return "", "", nil, fmt.Errorf("No such sector: %d", i)
 	}
-	contract, sectorRoot, data, err := f()
-	if err != nil {
-		return nil, err
+	if !sector.isData {
+		return "", "", nil, fmt.Errorf("The sector %d is not data", i)
 	}
-	if data != nil {
-		return data, nil
-	}
+	return sector.Contract, sector.MerkleRoot, sector.Data, nil
+}
+
+func (m *Manager) load(i int64, contract, sectorRoot string) ([]byte, error) {
 	log.Printf("Loading data from contract %s", contract)
 	t1 := time.Now()
-	data, err = m.siaclient.Read(contract, sectorRoot)
-	if err != nil {
-		return nil, err
-	}
+	data, err := m.siaclient.Read(contract, sectorRoot)
 	latency := time.Since(t1)
 	m.readsHistoryMu.Lock()
 	l, has := m.readsHistory[contract]
@@ -212,8 +203,89 @@ func (m *Manager) ReadSector(i int64) ([]byte, error) {
 	l.TotalMs += latency.Nanoseconds() / 1e6
 	l.Count++
 	m.readsHistoryMu.Unlock()
-	m.cipher.Decrypt(i, data)
+	if err == nil {
+		m.cipher.Decrypt(i, data)
+	}
 	return data, err
+}
+
+func (m *Manager) recoverData(i int64) ([]byte, error) {
+	m.mu.Lock()
+	sector, has := m.sectors[i]
+	if !has {
+		panic("unknown sector")
+	}
+	set := sector.set
+	if set == nil {
+		return nil, fmt.Errorf("sector %d not in set", i)
+	}
+	group := []Sector{}
+	all := append(set.DataSectors, set.ParitySectors...)
+	for _, sector := range all {
+		group = append(group, Sector{
+			id:         sector.id,
+			Contract:   sector.Contract,
+			MerkleRoot: sector.MerkleRoot,
+			Data:       sector.Data,
+		})
+	}
+	ndata := len(set.DataSectors)
+	nparity := len(set.ParitySectors)
+	m.mu.Unlock()
+	known := 0
+	thisJ := -1
+	for j, s := range group {
+		if s.Data != nil {
+			known++
+		}
+		if s.id == i {
+			thisJ = j
+		}
+	}
+	if thisJ == -1 {
+		panic("discrepancy: the sector must be in the set")
+	}
+	for j := 0; j < len(group) && known < ndata; j++ {
+		s := group[j]
+		if s.Data != nil {
+			continue
+		}
+		data, err := m.load(s.id, s.Contract, s.MerkleRoot)
+		if err == nil {
+			group[j].Data = data
+			known++
+		}
+	}
+	if known < ndata {
+		return nil, fmt.Errorf("not enough data to recover sector %d", i)
+	}
+	datas := make([][]byte, ndata+nparity)
+	for j, s := range group {
+		datas[j] = s.Data
+	}
+	rs, err := reedsolomon.New(ndata, nparity)
+	if err != nil {
+		return nil, fmt.Errorf("reedsolomon.New: %v", err)
+	}
+	if err := rs.Reconstruct(datas); err != nil {
+		return nil, fmt.Errorf("rs.Reconstruct: %v", err)
+	}
+	return datas[thisJ], nil
+}
+
+func (m *Manager) ReadSector(i int64) ([]byte, error) {
+	contract, sectorRoot, data, err := m.getSector(i)
+	if err != nil {
+		return nil, err
+	}
+	if data != nil {
+		return data, nil
+	}
+	data, err = m.load(i, contract, sectorRoot)
+	if err == nil {
+		return data, nil
+	}
+	return m.recoverData(i)
 }
 
 func (m *Manager) ReadSectorAt(i int64, offset, length int) ([]byte, error) {
