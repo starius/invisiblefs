@@ -62,7 +62,7 @@ type Manager struct {
 
 	ndata, nparity, sectorSize int
 
-	dataChan chan *Sector
+	dataChan chan struct{}
 	setChan  chan *Set
 	stopChan chan struct{}
 }
@@ -77,7 +77,7 @@ func New(ndata, nparity, sectorSize int, sc *siaclient.SiaClient, cipher Cipher)
 		siaclient:    sc,
 		cipher:       cipher,
 		readsHistory: make(map[string]*managerdb.Latency),
-		dataChan:     make(chan *Sector, 100),
+		dataChan:     make(chan struct{}, 100),
 		setChan:      make(chan *Set, 100),
 		stopChan:     make(chan struct{}),
 	}, nil
@@ -97,7 +97,7 @@ func Load(zdump []byte, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error
 		siaclient:    sc,
 		cipher:       cipher,
 		readsHistory: db.ReadsHistory,
-		dataChan:     make(chan *Sector, 100),
+		dataChan:     make(chan struct{}, 100),
 		setChan:      make(chan *Set, 100),
 		stopChan:     make(chan struct{}),
 		ndata:        int(db.Ndata),
@@ -135,6 +135,9 @@ func Load(zdump []byte, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error
 		}
 		m.sets = append(m.sets, set1)
 	}
+	for _, i := range db.Pending {
+		m.pending = append(m.pending, m.sectors[i])
+	}
 	return m, nil
 }
 
@@ -163,6 +166,9 @@ func (m *Manager) DumpDb() ([]byte, error) {
 			set1.ParityIds = append(set1.ParityIds, sector.id)
 		}
 		db.Sets = append(db.Sets, set1)
+	}
+	for _, sector := range m.pending {
+		db.Pending = append(db.Pending, sector.id)
 	}
 	m.mu.Unlock()
 	dump, err := proto.Marshal(db)
@@ -315,27 +321,37 @@ func (m *Manager) AddSector(data []byte) (int64, error) {
 		isData: true,
 	}
 	m.sectors[i] = sector
+	m.pending = append(m.pending, sector)
 	m.mu.Unlock()
-	m.dataChan <- sector
+	m.dataChan <- struct{}{}
 	return i, nil
 }
 
 func (m *Manager) Start() error {
-	go m.uploadPending()
+	go m.continueUploads()
 	go func() {
-		set := &Set{}
 		for {
 			select {
 			case <-m.stopChan:
 				break
-			case sector := <-m.dataChan:
-				set.DataSectors = append(set.DataSectors, sector)
-				sector.set = set
-				if len(set.DataSectors) == m.ndata {
-					m.setChan <- set
+			case <-m.dataChan:
+				var newSets []*Set
+				m.mu.Lock()
+				for len(m.pending) >= m.ndata {
+					set := &Set{
+						DataSectors: m.pending[:m.ndata],
+					}
+					m.pending = m.pending[m.ndata:]
+					for _, sector := range set.DataSectors {
+						sector.set = set
+					}
 					m.sets = append(m.sets, set)
-					set = &Set{}
+					newSets = append(newSets, set)
 					log.Printf("Formed parity set.")
+				}
+				m.mu.Unlock()
+				for _, set := range newSets {
+					m.setChan <- set
 				}
 			case set := <-m.setChan:
 				m.handleSet(set)
@@ -355,16 +371,11 @@ func (m *Manager) Stop() error {
 	return nil
 }
 
-func (m *Manager) uploadPending() {
-	var sectors []*Sector
+func (m *Manager) continueUploads() {
 	sets := make(map[*Set]struct{})
 	m.mu.Lock()
 	for _, sector := range m.sectors {
-		if sector.set == nil {
-			if sector.Data != nil && sector.isData {
-				sectors = append(sectors, sector)
-			}
-		} else if len(sector.Contract) == 0 {
+		if sector.set != nil && len(sector.Contract) == 0 {
 			sets[sector.set] = struct{}{}
 		}
 	}
@@ -374,10 +385,6 @@ func (m *Manager) uploadPending() {
 		}
 	}
 	m.mu.Unlock()
-	for _, sector := range sectors {
-		log.Printf("Adding sector %d to dataChan.", sector.id)
-		m.dataChan <- sector
-	}
 	for set := range sets {
 		log.Printf("Handling a parity set.")
 		m.setChan <- set

@@ -9,6 +9,7 @@ message Db {
   sint32 nparity = 4;
   sint32 sector_size = 5;
   map<string, Latency> reads_history = 6;
+  repeated sint64 pending = 7;
 }
 
 message Sector {
