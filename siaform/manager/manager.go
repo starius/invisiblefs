@@ -342,7 +342,11 @@ func (m *Manager) Start() error {
 						DataSectors: m.pending[:m.ndata],
 					}
 					m.pending = m.pending[m.ndata:]
+					m.addParity(set)
 					for _, sector := range set.DataSectors {
+						sector.set = set
+					}
+					for _, sector := range set.ParitySectors {
 						sector.set = set
 					}
 					m.sets = append(m.sets, set)
@@ -379,11 +383,6 @@ func (m *Manager) continueUploads() {
 			sets[sector.set] = struct{}{}
 		}
 	}
-	for _, set := range m.sets {
-		if len(set.ParitySectors) == 0 {
-			sets[set] = struct{}{}
-		}
-	}
 	m.mu.Unlock()
 	for set := range sets {
 		log.Printf("Handling a parity set.")
@@ -392,17 +391,6 @@ func (m *Manager) continueUploads() {
 }
 
 func (m *Manager) handleSet(set *Set) {
-	if len(set.ParitySectors) == 0 {
-		if err := m.addParity(set); err != nil {
-			log.Printf("m.addParity: %v.", err)
-			go func() {
-				time.Sleep(time.Second)
-				m.setChan <- set
-			}()
-			return
-		}
-		log.Printf("Added parity sectors.")
-	}
 	if err := m.uploadSet(set); err != nil {
 		log.Printf("m.uploadSet: %v.", err)
 		go func() {
@@ -481,12 +469,16 @@ func (m *Manager) uploadSet(set *Set) error {
 	return nil
 }
 
-func (m *Manager) addParity(set *Set) error {
+func (m *Manager) addParity(set *Set) {
+	// Run under m.mu.Lock().
 	var datas [][]byte
 	if len(set.DataSectors) != m.ndata {
 		panic("len(set.DataSectors) != m.ndata")
 	}
 	for _, sector := range set.DataSectors {
+		if len(sector.Data) != m.sectorSize {
+			panic("len(sector.Data) != m.sectorSize")
+		}
 		datas = append(datas, sector.Data)
 	}
 	for j := 0; j < m.nparity; j++ {
@@ -494,12 +486,11 @@ func (m *Manager) addParity(set *Set) error {
 	}
 	rs, err := reedsolomon.New(m.ndata, m.nparity)
 	if err != nil {
-		return fmt.Errorf("reedsolomon.New: %v", err)
+		panic(fmt.Sprintf("reedsolomon.New: %v", err))
 	}
 	if err := rs.Encode(datas); err != nil {
-		return fmt.Errorf("rs.Encode: %v", err)
+		panic(fmt.Sprintf("rs.Encode: %v", err))
 	}
-	m.mu.Lock()
 	for j := 0; j < m.nparity; j++ {
 		i := m.next
 		m.next++
@@ -511,8 +502,6 @@ func (m *Manager) addParity(set *Set) error {
 		m.sectors[i] = sector
 		set.ParitySectors = append(set.ParitySectors, sector)
 	}
-	m.mu.Unlock()
-	return nil
 }
 
 func (m *Manager) uploadSector(sector *Sector, contract string) error {
