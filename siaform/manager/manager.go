@@ -449,24 +449,40 @@ func (m *Manager) uploadSet(set *Set) error {
 		return iavg < javg
 	})
 	m.readsHistoryMu.Unlock()
+	var wg sync.WaitGroup
+	errors := make(chan error, len(dataSectors)+len(paritySectors))
 	// Upload data sectors to fastest contracts.
 	for j, i := range rand.Perm(len(dataSectors)) {
 		contract := contracts1[i]
 		sector := dataSectors[j]
-		if err := m.uploadSector(sector, contract); err != nil {
-			return fmt.Errorf("m.uploadSector: %v", err)
-		}
+		wg.Add(1)
+		go func(sector *Sector, contract string) {
+			defer wg.Done()
+			if err := m.uploadSector(sector, contract); err != nil {
+				errors <- err
+			}
+		}(sector, contract)
 	}
 	// Upload parity sectors to random subset of other contracts.
 	contracts1 = contracts1[len(dataSectors):]
 	for j, i := range rand.Perm(len(contracts1))[:len(paritySectors)] {
 		contract := contracts1[i]
 		sector := paritySectors[j]
-		if err := m.uploadSector(sector, contract); err != nil {
-			return fmt.Errorf("m.uploadSector: %v", err)
-		}
+		wg.Add(1)
+		go func(sector *Sector, contract string) {
+			defer wg.Done()
+			if err := m.uploadSector(sector, contract); err != nil {
+				errors <- err
+			}
+		}(sector, contract)
 	}
-	return nil
+	wg.Wait()
+	select {
+	case err := <-errors:
+		return fmt.Errorf("m.uploadSector: %v", err)
+	default:
+		return nil
+	}
 }
 
 func (m *Manager) addParity(set *Set) {
