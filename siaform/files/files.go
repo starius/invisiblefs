@@ -3,6 +3,7 @@ package files
 import (
 	"fmt"
 	"io"
+	"log"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
@@ -117,7 +118,7 @@ type File struct {
 }
 
 func (f *File) Seek(offset int64, whence int) (int64, error) {
-	fmt.Printf("Seek(%v, %v)\n", offset, whence)
+	log.Printf("Seek(%v, %v)\n", offset, whence)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if offset < 0 {
@@ -138,7 +139,6 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 func (f *File) Read(p []byte) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fmt.Printf("Reading %d bytes.\n", len(p))
 	// TODO: pieces can be less than blocks.
 	pbegin := f.offset / int64(f.sectorSize)
 	pend := (f.offset+int64(len(p))-1)/int64(f.sectorSize) + 1
@@ -173,7 +173,7 @@ func (f *File) Read(p []byte) (n int, err error) {
 func (f *File) Write(p []byte) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fmt.Printf("Writing %d bytes.\n", len(p))
+	log.Printf("Writing %d bytes.\n", len(p))
 	if f.File.Size%int64(f.sectorSize) != 0 {
 		return 0, fmt.Errorf("last block was the last one")
 	}

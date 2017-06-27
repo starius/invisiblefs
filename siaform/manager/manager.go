@@ -280,11 +280,13 @@ func (m *Manager) recoverData(i int64) ([]byte, error) {
 }
 
 func (m *Manager) ReadSector(i int64) ([]byte, error) {
+	log.Printf("Reading sector %d", i)
 	contract, sectorRoot, data, err := m.getSector(i)
 	if err != nil {
 		return nil, err
 	}
 	if data != nil {
+		log.Printf("Sector %d is found in memory", i)
 		return data, nil
 	}
 	data, err = m.load(i, contract, sectorRoot)
@@ -307,8 +309,8 @@ func (m *Manager) ReadSectorAt(i int64, offset, length int) ([]byte, error) {
 }
 
 func (m *Manager) AddSector(data []byte) (int64, error) {
-	fmt.Printf("Manager.AddSector) start\n")
-	defer fmt.Printf("Manager.AddSector) stop\n")
+	log.Printf("Manager.AddSector) start\n")
+	defer log.Printf("Manager.AddSector) stop\n")
 	if len(data) != m.sectorSize {
 		return 0, fmt.Errorf("data length is %d", len(data))
 	}
@@ -391,6 +393,7 @@ func (m *Manager) continueUploads() {
 }
 
 func (m *Manager) handleSet(set *Set) {
+	log.Printf("Uploading a parity set")
 	if err := m.uploadSet(set); err != nil {
 		log.Printf("m.uploadSet: %v.", err)
 		go func() {
