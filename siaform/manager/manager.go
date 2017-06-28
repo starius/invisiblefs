@@ -360,7 +360,7 @@ func (m *Manager) Start() error {
 					m.setChan <- set
 				}
 			case set := <-m.setChan:
-				m.handleSet(set)
+				go m.handleSet(set)
 			}
 		}
 		// Ingest all data from channels to unblock goroutines.
@@ -396,10 +396,8 @@ func (m *Manager) handleSet(set *Set) {
 	log.Printf("Uploading a parity set")
 	if err := m.uploadSet(set); err != nil {
 		log.Printf("m.uploadSet: %v.", err)
-		go func() {
-			time.Sleep(time.Second)
-			m.setChan <- set
-		}()
+		time.Sleep(time.Second)
+		m.setChan <- set
 		return
 	}
 	log.Printf("Uploaded parity set.")
