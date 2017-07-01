@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -482,12 +483,16 @@ func (m *Manager) uploadSet(set *Set) error {
 		}(sector, contract)
 	}
 	wg.Wait()
-	select {
-	case err := <-errors:
-		return fmt.Errorf("m.uploadSector: %v", err)
-	default:
-		return nil
+	close(errors)
+	var texts []string
+	for err := range errors {
+		texts = append(texts, err.Error())
 	}
+	if len(texts) > 0 {
+		text := strings.Join(texts, "; ")
+		return fmt.Errorf("m.uploadSector: %s", text)
+	}
+	return nil
 }
 
 func (m *Manager) addParity(set *Set) {
