@@ -61,6 +61,9 @@ type Manager struct {
 	readsHistory   map[string]*managerdb.Latency
 	readsHistoryMu sync.Mutex
 
+	writesHistory   map[string]*managerdb.Attempts
+	writesHistoryMu sync.Mutex
+
 	ndata, nparity, sectorSize int
 
 	dataChan chan struct{}
@@ -70,17 +73,18 @@ type Manager struct {
 
 func New(ndata, nparity, sectorSize int, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error) {
 	return &Manager{
-		sectors:      make(map[int64]*Sector),
-		next:         1,
-		ndata:        ndata,
-		nparity:      nparity,
-		sectorSize:   sectorSize,
-		siaclient:    sc,
-		cipher:       cipher,
-		readsHistory: make(map[string]*managerdb.Latency),
-		dataChan:     make(chan struct{}, 100),
-		setChan:      make(chan *Set, 100),
-		stopChan:     make(chan struct{}),
+		sectors:       make(map[int64]*Sector),
+		next:          1,
+		ndata:         ndata,
+		nparity:       nparity,
+		sectorSize:    sectorSize,
+		siaclient:     sc,
+		cipher:        cipher,
+		readsHistory:  make(map[string]*managerdb.Latency),
+		writesHistory: make(map[string]*managerdb.Attempts),
+		dataChan:      make(chan struct{}, 100),
+		setChan:       make(chan *Set, 100),
+		stopChan:      make(chan struct{}),
 	}, nil
 }
 
@@ -94,19 +98,23 @@ func Load(zdump []byte, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error
 		return nil, fmt.Errorf("proto.Unmarshal(dump, db): %v", err)
 	}
 	m := &Manager{
-		sectors:      make(map[int64]*Sector),
-		siaclient:    sc,
-		cipher:       cipher,
-		readsHistory: db.ReadsHistory,
-		dataChan:     make(chan struct{}, 100),
-		setChan:      make(chan *Set, 100),
-		stopChan:     make(chan struct{}),
-		ndata:        int(db.Ndata),
-		nparity:      int(db.Nparity),
-		sectorSize:   int(db.SectorSize),
+		sectors:       make(map[int64]*Sector),
+		siaclient:     sc,
+		cipher:        cipher,
+		readsHistory:  db.ReadsHistory,
+		writesHistory: db.WritesHistory,
+		dataChan:      make(chan struct{}, 100),
+		setChan:       make(chan *Set, 100),
+		stopChan:      make(chan struct{}),
+		ndata:         int(db.Ndata),
+		nparity:       int(db.Nparity),
+		sectorSize:    int(db.SectorSize),
 	}
 	if m.readsHistory == nil {
 		m.readsHistory = make(map[string]*managerdb.Latency)
+	}
+	if m.writesHistory == nil {
+		m.writesHistory = make(map[string]*managerdb.Attempts)
 	}
 	maxI := int64(0)
 	for i, sector := range db.Sectors {
@@ -144,11 +152,12 @@ func Load(zdump []byte, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error
 
 func (m *Manager) DumpDb() ([]byte, error) {
 	db := &managerdb.Db{
-		Sectors:      make(map[int64]*managerdb.Sector),
-		Ndata:        int32(m.ndata),
-		Nparity:      int32(m.nparity),
-		SectorSize:   int32(m.sectorSize),
-		ReadsHistory: m.readsHistory,
+		Sectors:       make(map[int64]*managerdb.Sector),
+		Ndata:         int32(m.ndata),
+		Nparity:       int32(m.nparity),
+		SectorSize:    int32(m.sectorSize),
+		ReadsHistory:  m.readsHistory,
+		WritesHistory: m.writesHistory,
 	}
 	m.mu.Lock()
 	for i, sector := range m.sectors {
@@ -433,11 +442,17 @@ func (m *Manager) uploadSet(set *Set) error {
 		return fmt.Errorf("siaclient.Contracts: %v.", err)
 	}
 	var contracts1 []string
+	m.writesHistoryMu.Lock()
 	for _, contract := range contracts {
-		if _, has := used[contract]; !has {
-			contracts1 = append(contracts1, contract)
+		if _, has := used[contract]; has {
+			continue
 		}
+		if a, has := m.writesHistory[contract]; has && a.Count >= 3 && a.Successes == 0 {
+			continue
+		}
+		contracts1 = append(contracts1, contract)
 	}
+	m.writesHistoryMu.Unlock()
 	if len(contracts1) < n {
 		return fmt.Errorf("too few contracts")
 	}
@@ -535,6 +550,17 @@ func (m *Manager) uploadSector(sector *Sector, contract string) error {
 	copy(data, sector.Data)
 	m.cipher.Encrypt(sector.id, data)
 	sectorRoot, err := m.siaclient.Write(contract, data)
+	m.writesHistoryMu.Lock()
+	a, has := m.writesHistory[contract]
+	if !has {
+		a = &managerdb.Attempts{}
+		m.writesHistory[contract] = a
+	}
+	if err == nil {
+		a.Successes++
+	}
+	a.Count++
+	m.writesHistoryMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("siaclient.Write(%q): %v.", contract, err)
 	}

@@ -9,6 +9,7 @@ message Db {
   sint32 nparity = 4;
   sint32 sector_size = 5;
   map<string, Latency> reads_history = 6;
+  map<string, Attempts> writes_history = 8;
   repeated sint64 pending = 7;
 }
 
@@ -28,5 +29,10 @@ message Set {
 
 message Latency {
   sint64 total_ms = 1;
+  sint64 count = 2;
+}
+
+message Attempts {
+  sint64 successes = 1;
   sint64 count = 2;
 }
