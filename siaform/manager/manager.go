@@ -319,8 +319,6 @@ func (m *Manager) ReadSectorAt(i int64, offset, length int) ([]byte, error) {
 }
 
 func (m *Manager) AddSector(data []byte) (int64, error) {
-	log.Printf("Manager.AddSector) start\n")
-	defer log.Printf("Manager.AddSector) stop\n")
 	if len(data) != m.sectorSize {
 		return 0, fmt.Errorf("data length is %d", len(data))
 	}
@@ -335,6 +333,7 @@ func (m *Manager) AddSector(data []byte) (int64, error) {
 	m.sectors[i] = sector
 	m.pending = append(m.pending, sector)
 	m.mu.Unlock()
+	log.Printf("Added sector with data: %d", i)
 	m.dataChan <- struct{}{}
 	return i, nil
 }
@@ -372,6 +371,11 @@ func (m *Manager) continueUploads() {
 	for _, sector := range m.sectors {
 		if sector.set != nil && len(sector.Contract) == 0 {
 			sets[sector.set] = struct{}{}
+		}
+		if sector.Data != nil {
+			s := *sector
+			s.Data = nil
+			log.Printf("Sector with data: %#v", s)
 		}
 	}
 	m.mu.Unlock()
