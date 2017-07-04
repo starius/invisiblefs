@@ -146,6 +146,7 @@ func Load(zdump []byte, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error
 	}
 	for _, i := range db.Pending {
 		m.pending = append(m.pending, m.sectors[i])
+		m.sectors[i].isData = true
 	}
 	return m, nil
 }
