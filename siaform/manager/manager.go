@@ -287,6 +287,7 @@ func (m *Manager) recoverData(i int64) ([]byte, error) {
 	if err := rs.Reconstruct(datas); err != nil {
 		return nil, fmt.Errorf("rs.Reconstruct: %v", err)
 	}
+	log.Printf("Recovered sector %d", i)
 	return datas[thisJ], nil
 }
 
@@ -304,6 +305,7 @@ func (m *Manager) ReadSector(i int64) ([]byte, error) {
 	if err == nil {
 		return data, nil
 	}
+	log.Printf("Sector %d is broken - recovering", i)
 	return m.recoverData(i)
 }
 
