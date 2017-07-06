@@ -230,10 +230,12 @@ func (m *Manager) recoverData(i int64) ([]byte, error) {
 	m.mu.Lock()
 	sector, has := m.sectors[i]
 	if !has {
-		panic("unknown sector")
+		m.mu.Unlock()
+		return nil, fmt.Errorf("unknown sector %d", i)
 	}
 	set := sector.set
 	if set == nil {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("sector %d not in set", i)
 	}
 	group := []Sector{}
