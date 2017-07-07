@@ -226,6 +226,11 @@ func (m *Manager) load(i int64, contract, sectorRoot string) ([]byte, error) {
 	return data, err
 }
 
+type event struct {
+	j    int
+	data []byte
+}
+
 func (m *Manager) recoverData(i int64) ([]byte, error) {
 	m.mu.Lock()
 	sector, has := m.sectors[i]
@@ -251,36 +256,42 @@ func (m *Manager) recoverData(i int64) ([]byte, error) {
 	ndata := len(set.DataSectors)
 	nparity := len(set.ParitySectors)
 	m.mu.Unlock()
-	known := 0
-	thisJ := -1
+	events := make(chan event, ndata+nparity)
 	for j, s := range group {
 		if s.Data != nil {
-			known++
-		}
-		if s.id == i {
-			thisJ = j
-		}
-	}
-	if thisJ == -1 {
-		panic("discrepancy: the sector must be in the set")
-	}
-	for j := 0; j < len(group) && known < ndata; j++ {
-		s := group[j]
-		if s.Data != nil {
+			events <- event{j, s.Data}
 			continue
 		}
-		data, err := m.load(s.id, s.Contract, s.MerkleRoot)
-		if err == nil {
-			group[j].Data = data
-			known++
+		go func(j int, s Sector) {
+			data, err := m.load(s.id, s.Contract, s.MerkleRoot)
+			if err == nil {
+				events <- event{j, data}
+			} else {
+				log.Printf("Failed to load sector %d from %q", s.id, s.Contract)
+				events <- event{j, nil}
+			}
+		}(j, s)
+	}
+	known := 0
+	datas := make([][]byte, ndata+nparity)
+	for k := 0; k < ndata+nparity; k++ {
+		var e event
+		select {
+		case <-m.stopChan:
+			return nil, fmt.Errorf("The manager was stopped")
+		case e = <-events:
+		}
+		if e.data == nil {
+			continue
+		}
+		datas[e.j] = e.data
+		known++
+		if known == ndata {
+			break
 		}
 	}
 	if known < ndata {
 		return nil, fmt.Errorf("not enough data to recover sector %d", i)
-	}
-	datas := make([][]byte, ndata+nparity)
-	for j, s := range group {
-		datas[j] = s.Data
 	}
 	rs, err := reedsolomon.New(ndata, nparity)
 	if err != nil {
@@ -288,6 +299,15 @@ func (m *Manager) recoverData(i int64) ([]byte, error) {
 	}
 	if err := rs.Reconstruct(datas); err != nil {
 		return nil, fmt.Errorf("rs.Reconstruct: %v", err)
+	}
+	thisJ := -1
+	for j, s := range group {
+		if s.id == i {
+			thisJ = j
+		}
+	}
+	if thisJ == -1 {
+		panic("discrepancy: the sector must be in the set")
 	}
 	log.Printf("Recovered sector %d", i)
 	return datas[thisJ], nil
