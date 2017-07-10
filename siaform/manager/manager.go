@@ -61,8 +61,8 @@ type Manager struct {
 	readsHistory   map[string]*managerdb.Latency
 	readsHistoryMu sync.Mutex
 
-	writesHistory   map[string]*managerdb.Attempts
-	writesHistoryMu sync.Mutex
+	lastFailure   map[string]time.Time
+	lastFailureMu sync.Mutex
 
 	ndata, nparity, sectorSize int
 
@@ -73,18 +73,18 @@ type Manager struct {
 
 func New(ndata, nparity, sectorSize int, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error) {
 	return &Manager{
-		sectors:       make(map[int64]*Sector),
-		next:          1,
-		ndata:         ndata,
-		nparity:       nparity,
-		sectorSize:    sectorSize,
-		siaclient:     sc,
-		cipher:        cipher,
-		readsHistory:  make(map[string]*managerdb.Latency),
-		writesHistory: make(map[string]*managerdb.Attempts),
-		dataChan:      make(chan struct{}, 100),
-		setChan:       make(chan *Set, 100),
-		stopChan:      make(chan struct{}),
+		sectors:      make(map[int64]*Sector),
+		next:         1,
+		ndata:        ndata,
+		nparity:      nparity,
+		sectorSize:   sectorSize,
+		siaclient:    sc,
+		cipher:       cipher,
+		readsHistory: make(map[string]*managerdb.Latency),
+		lastFailure:  make(map[string]time.Time),
+		dataChan:     make(chan struct{}, 100),
+		setChan:      make(chan *Set, 100),
+		stopChan:     make(chan struct{}),
 	}, nil
 }
 
@@ -98,23 +98,20 @@ func Load(zdump []byte, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error
 		return nil, fmt.Errorf("proto.Unmarshal(dump, db): %v", err)
 	}
 	m := &Manager{
-		sectors:       make(map[int64]*Sector),
-		siaclient:     sc,
-		cipher:        cipher,
-		readsHistory:  db.ReadsHistory,
-		writesHistory: db.WritesHistory,
-		dataChan:      make(chan struct{}, 100),
-		setChan:       make(chan *Set, 100),
-		stopChan:      make(chan struct{}),
-		ndata:         int(db.Ndata),
-		nparity:       int(db.Nparity),
-		sectorSize:    int(db.SectorSize),
+		sectors:      make(map[int64]*Sector),
+		siaclient:    sc,
+		cipher:       cipher,
+		readsHistory: db.ReadsHistory,
+		lastFailure:  make(map[string]time.Time),
+		dataChan:     make(chan struct{}, 100),
+		setChan:      make(chan *Set, 100),
+		stopChan:     make(chan struct{}),
+		ndata:        int(db.Ndata),
+		nparity:      int(db.Nparity),
+		sectorSize:   int(db.SectorSize),
 	}
 	if m.readsHistory == nil {
 		m.readsHistory = make(map[string]*managerdb.Latency)
-	}
-	if m.writesHistory == nil {
-		m.writesHistory = make(map[string]*managerdb.Attempts)
 	}
 	maxI := int64(0)
 	for i, sector := range db.Sectors {
@@ -153,12 +150,11 @@ func Load(zdump []byte, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error
 
 func (m *Manager) DumpDb() ([]byte, error) {
 	db := &managerdb.Db{
-		Sectors:       make(map[int64]*managerdb.Sector),
-		Ndata:         int32(m.ndata),
-		Nparity:       int32(m.nparity),
-		SectorSize:    int32(m.sectorSize),
-		ReadsHistory:  m.readsHistory,
-		WritesHistory: m.writesHistory,
+		Sectors:      make(map[int64]*managerdb.Sector),
+		Ndata:        int32(m.ndata),
+		Nparity:      int32(m.nparity),
+		SectorSize:   int32(m.sectorSize),
+		ReadsHistory: m.readsHistory,
 	}
 	m.mu.Lock()
 	for i, sector := range m.sectors {
@@ -208,6 +204,9 @@ func (m *Manager) getSector(i int64) (string, string, []byte, error) {
 
 func (m *Manager) load(i int64, contract, sectorRoot string) ([]byte, error) {
 	log.Printf("Loading data from contract %s", contract)
+	if contract == "84e570089934203463967a7bf8b55b37664f597dc1004cb20f526d87259fecda" {
+		return nil, fmt.Errorf("test error")
+	}
 	t1 := time.Now()
 	data, err := m.siaclient.Read(contract, sectorRoot)
 	latency := time.Since(t1)
@@ -471,17 +470,17 @@ func (m *Manager) uploadSet(set *Set) error {
 		return fmt.Errorf("siaclient.Contracts: %v.", err)
 	}
 	var contracts1 []string
-	m.writesHistoryMu.Lock()
+	m.lastFailureMu.Lock()
 	for _, contract := range contracts {
 		if _, has := used[contract]; has {
 			continue
 		}
-		if a, has := m.writesHistory[contract]; has && a.Count >= 3 && a.Successes == 0 {
+		if a, has := m.lastFailure[contract]; has && time.Since(a) < time.Minute {
 			continue
 		}
 		contracts1 = append(contracts1, contract)
 	}
-	m.writesHistoryMu.Unlock()
+	m.lastFailureMu.Unlock()
 	if len(contracts1) < n {
 		return fmt.Errorf("too few contracts")
 	}
@@ -579,17 +578,11 @@ func (m *Manager) uploadSector(sector *Sector, contract string) error {
 	copy(data, sector.Data)
 	m.cipher.Encrypt(sector.id, data)
 	sectorRoot, err := m.siaclient.Write(contract, data)
-	m.writesHistoryMu.Lock()
-	a, has := m.writesHistory[contract]
-	if !has {
-		a = &managerdb.Attempts{}
-		m.writesHistory[contract] = a
+	if err != nil {
+		m.lastFailureMu.Lock()
+		m.lastFailure[contract] = time.Now()
+		m.lastFailureMu.Unlock()
 	}
-	if err == nil {
-		a.Successes++
-	}
-	a.Count++
-	m.writesHistoryMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("siaclient.Write(%q): %v.", contract, err)
 	}
