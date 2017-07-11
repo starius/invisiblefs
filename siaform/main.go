@@ -109,7 +109,7 @@ func h(res http.ResponseWriter, req *http.Request) {
 					n, err := io.ReadFull(part, buf)
 					buf1 := buf
 					theLast := false
-					if err == io.ErrUnexpectedEOF {
+					if err == io.ErrUnexpectedEOF || err == io.EOF {
 						buf1 = buf[:n]
 						theLast = true
 					} else if err != nil {
