@@ -66,6 +66,10 @@ func (s *SiaClient) Contracts() ([]string, error) {
 	return contracts, nil
 }
 
+type readJson struct {
+	Message string
+}
+
 func (s *SiaClient) Read(contractID, sectorRoot string) ([]byte, error) {
 	path2 := "/renter/read/" + contractID + "/" + sectorRoot
 	req := &http.Request{
@@ -87,6 +91,13 @@ func (s *SiaClient) Read(contractID, sectorRoot string) ([]byte, error) {
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("ioutil.ReadAll(resp.Body): %v.", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		var rr readJson
+		if err := json.Unmarshal(body, &rr); err != nil {
+			return nil, fmt.Errorf("HTTP status: %s; json.Unmarshal(body): %v.", resp.Status, err)
+		}
+		return nil, fmt.Errorf("HTTP status: %s; rr.Message: %s.", resp.Status, rr.Message)
 	}
 	return body, nil
 }
