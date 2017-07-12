@@ -219,6 +219,9 @@ func (m *Manager) load(i int64, contract, sectorRoot string) ([]byte, error) {
 	l.TotalMs += latency.Nanoseconds() / 1e6
 	l.Count++
 	m.readsHistoryMu.Unlock()
+	if len(data) != m.sectorSize {
+		return nil, fmt.Errorf("Bad data length: %d. Want %d", len(data), m.sectorSize)
+	}
 	if err == nil {
 		m.cipher.Decrypt(i, data)
 	}
