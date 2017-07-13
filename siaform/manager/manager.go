@@ -333,7 +333,7 @@ func (m *Manager) ReadSector(i int64) ([]byte, error) {
 	return m.recoverData(i)
 }
 
-func (m *Manager) ReadSectorAt(i int64, offset, length int) ([]byte, error) {
+func (m *Manager) InsecureReadSectorAt(i int64, offset, length int) ([]byte, error) {
 	if offset < 0 || length < 0 || offset+length > m.sectorSize {
 		return nil, fmt.Errorf("Bad range: [%d,%d)", offset, offset+length)
 	}
