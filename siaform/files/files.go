@@ -1,6 +1,8 @@
 package files
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
@@ -136,36 +138,76 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 	return f.offset, nil
 }
 
+func max(x, y int64) int64 {
+	if x > y {
+		return x
+	} else {
+		return y
+	}
+}
+
+func min(x, y int64) int64 {
+	if x > y {
+		return y
+	} else {
+		return x
+	}
+}
+
 func (f *File) Read(p []byte) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	// TODO: pieces can be less than blocks.
-	pbegin := f.offset / int64(f.sectorSize)
-	pend := (f.offset+int64(len(p))-1)/int64(f.sectorSize) + 1
-	if pend > int64(len(f.File.Pieces)) {
-		pend = int64(len(f.File.Pieces))
-	}
-	for pi := pbegin; pi < pend; pi++ {
-		var sector []byte
-		sectorID := f.File.Pieces[pi].SectorId
-		if sectorID == f.lastSectorID {
-			sector = f.lastSector
-		} else {
-			sector, err = f.manager.ReadSector(sectorID)
-			if err != nil {
-				return n, err
+	fbegin := int64(0)
+	pbegin := f.offset
+	pend := pbegin + int64(len(p))
+	for _, piece := range f.File.Pieces {
+		offset := int64(0)
+		length := int64(f.sectorSize)
+		if len(piece.Sha256) != 0 {
+			offset = int64(piece.Offset)
+			length = int64(piece.Length)
+		}
+		fend := fbegin + length
+		if (pbegin <= fbegin && fbegin < pend) || (fbegin <= pbegin && pbegin < fend) {
+			begin := max(pbegin, fbegin)
+			end := min(pend, fend)
+			l := end - begin
+			rbegin := begin - pbegin
+			rend := rbegin + l
+			sbegin := begin - fbegin + offset
+			send := sbegin + l
+			r := p[rbegin:rend]
+			//
+			sectorID := piece.SectorId
+			var part []byte
+			if len(piece.Sha256) == 0 {
+				var sector []byte
+				if sectorID == f.lastSectorID {
+					sector = f.lastSector
+				} else {
+					sector, err = f.manager.ReadSector(sectorID)
+					if err != nil {
+						return n, err
+					}
+					f.lastSector = sector
+					f.lastSectorID = sectorID
+				}
+				part = sector[sbegin:send]
+			} else {
+				part, err = f.manager.InsecureReadSectorAt(sectorID, int(sbegin), int(send))
+				if err != nil {
+					return n, err
+				}
+				checksum := sha256.Sum256(part)
+				if !bytes.Equal(checksum[:], piece.Sha256) {
+					return n, fmt.Errorf("Checksum mismatch")
+				}
 			}
-			f.lastSector = sector
-			f.lastSectorID = sectorID
+			nn := copy(r, part)
+			n += nn
+			f.offset += int64(nn)
 		}
-		offsetInside := f.offset % int64(f.sectorSize)
-		if offsetInside != 0 {
-			sector = sector[offsetInside:]
-		}
-		l := copy(p, sector)
-		n += l
-		f.offset += int64(l)
-		p = p[l:]
+		fbegin = fend
 	}
 	return n, nil
 }
