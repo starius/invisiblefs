@@ -5,6 +5,8 @@ package filesdb;
 message Db {
   map<string, File> files = 1;
   sint32 sector_size = 2;
+  bytes in_progress = 3;
+  sint64 in_progress_sector_id = 4;
 }
 
 message File {

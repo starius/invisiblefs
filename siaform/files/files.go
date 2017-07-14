@@ -76,6 +76,7 @@ func (f *Files) Open(name string) (*File, error) {
 		manager:      f.manager,
 		sectorSize:   int(f.db.SectorSize),
 		lastSectorID: -1,
+		fs:           f,
 	}, nil
 }
 
@@ -94,6 +95,7 @@ func (f *Files) Create(name string) (*File, error) {
 		manager:      f.manager,
 		sectorSize:   int(f.db.SectorSize),
 		lastSectorID: -1,
+		fs:           f,
 	}, nil
 }
 
@@ -116,6 +118,7 @@ type File struct {
 	sectorSize   int
 	lastSector   []byte
 	lastSectorID int64
+	fs           *Files
 	mu           sync.Mutex
 }
 
@@ -194,13 +197,21 @@ func (f *File) Read(p []byte) (n int, err error) {
 				}
 				part = sector[sbegin:send]
 			} else {
-				part, err = f.manager.InsecureReadSectorAt(sectorID, int(sbegin), int(send))
-				if err != nil {
-					return n, err
-				}
-				checksum := sha256.Sum256(part)
-				if !bytes.Equal(checksum[:], piece.Sha256) {
-					return n, fmt.Errorf("Checksum mismatch")
+				f.fs.mu.Lock()
+				ip := f.fs.db.InProgress
+				ipsid := f.fs.db.InProgressSectorId
+				f.fs.mu.Unlock()
+				if sectorID == ipsid {
+					part = ip[sbegin:send]
+				} else {
+					part, err = f.manager.InsecureReadSectorAt(sectorID, int(sbegin), int(send))
+					if err != nil {
+						return n, err
+					}
+					checksum := sha256.Sum256(part)
+					if !bytes.Equal(checksum[:], piece.Sha256) {
+						return n, fmt.Errorf("Checksum mismatch")
+					}
 				}
 			}
 			nn := copy(r, part)
@@ -216,24 +227,49 @@ func (f *File) Write(p []byte) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	log.Printf("Writing %d bytes.\n", len(p))
-	if f.File.Size%int64(f.sectorSize) != 0 {
-		return 0, fmt.Errorf("last block was the last one")
-	}
 	if len(p) > f.sectorSize {
 		return 0, fmt.Errorf("too long write")
 	}
 	l := len(p)
 	if l != f.sectorSize {
-		zeros := make([]byte, f.sectorSize-l)
-		p = append(p, zeros...)
+		f.fs.mu.Lock()
+		defer f.fs.mu.Unlock()
+		if len(f.fs.db.InProgress)+l > f.sectorSize {
+			// Upload previous in_progress sector.
+			nz := f.sectorSize - len(f.fs.db.InProgress)
+			ip := append(f.fs.db.InProgress, make([]byte, nz)...)
+			ipsid := f.fs.db.InProgressSectorId
+			if err := f.manager.WriteSector(ipsid, ip); err != nil {
+				return 0, fmt.Errorf("WriteSector: %v", err)
+			}
+			f.fs.db.InProgress = nil
+			f.fs.db.InProgressSectorId = 0
+		}
+		if f.fs.db.InProgressSectorId == 0 {
+			sectorID, err := f.manager.AllocateSector()
+			if err != nil {
+				return 0, fmt.Errorf("AllocateSector: %v", err)
+			}
+			f.fs.db.InProgressSectorId = sectorID
+		}
+		offset := len(f.fs.db.InProgress)
+		f.fs.db.InProgress = append(f.fs.db.InProgress, p...)
+		checksum := sha256.Sum256(p)
+		f.File.Pieces = append(f.File.Pieces, &filesdb.Piece{
+			SectorId: f.fs.db.InProgressSectorId,
+			Sha256:   checksum[:],
+			Offset:   int32(offset),
+			Length:   int32(l),
+		})
+	} else {
+		sectorID, err := f.manager.AddSector(p)
+		if err != nil {
+			return 0, fmt.Errorf("AddSector: %v", err)
+		}
+		f.File.Pieces = append(f.File.Pieces, &filesdb.Piece{
+			SectorId: sectorID,
+		})
 	}
-	sectorID, err := f.manager.AddSector(p)
-	if err != nil {
-		return 0, fmt.Errorf("AddSector: %v", err)
-	}
-	f.File.Pieces = append(f.File.Pieces, &filesdb.Piece{
-		SectorId: sectorID,
-	})
 	f.File.Size += int64(l)
 	f.offset += int64(l)
 	return l, nil

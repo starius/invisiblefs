@@ -346,23 +346,48 @@ func (m *Manager) InsecureReadSectorAt(i int64, offset, length int) ([]byte, err
 }
 
 func (m *Manager) AddSector(data []byte) (int64, error) {
-	if len(data) != m.sectorSize {
-		return 0, fmt.Errorf("data length is %d", len(data))
+	i, err := m.AllocateSector()
+	if err != nil {
+		return 0, fmt.Errorf("m.AllocateSector: %v", err)
 	}
+	if err := m.WriteSector(i, data); err != nil {
+		return 0, fmt.Errorf("m.WriteSector(%d): %v", i, err)
+	}
+	return i, nil
+}
+
+func (m *Manager) AllocateSector() (int64, error) {
 	m.mu.Lock()
 	i := m.next
 	m.next++
-	sector := &Sector{
-		Data:   data,
-		id:     i,
-		isData: true,
+	m.sectors[i] = &Sector{}
+	m.mu.Unlock()
+	log.Printf("Allocated sector %d", i)
+	return i, nil
+}
+
+func (m *Manager) WriteSector(i int64, data []byte) error {
+	if len(data) != m.sectorSize {
+		return fmt.Errorf("data length is %d", len(data))
 	}
-	m.sectors[i] = sector
+	m.mu.Lock()
+	sector, has := m.sectors[i]
+	if !has {
+		m.mu.Unlock()
+		return fmt.Errorf("sector %d not found", i)
+	}
+	if sector.Data != nil || sector.Contract != "" {
+		m.mu.Unlock()
+		return fmt.Errorf("sector %d is not empty", i)
+	}
+	sector.Data = data
+	sector.id = i
+	sector.isData = true
 	m.pending = append(m.pending, sector)
 	m.mu.Unlock()
-	log.Printf("Added sector with data: %d", i)
+	log.Printf("Filled sector with data: %d", i)
 	m.dataChan <- struct{}{}
-	return i, nil
+	return nil
 }
 
 func (m *Manager) Start() error {
