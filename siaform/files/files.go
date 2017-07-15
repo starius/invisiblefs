@@ -204,7 +204,7 @@ func (f *File) Read(p []byte) (n int, err error) {
 				if sectorID == ipsid {
 					part = ip[sbegin:send]
 				} else {
-					part, err = f.manager.InsecureReadSectorAt(sectorID, int(sbegin), int(send))
+					part, err = f.manager.InsecureReadSectorAt(sectorID, int(sbegin), int(send-sbegin))
 					if err != nil {
 						return n, err
 					}
