@@ -80,6 +80,13 @@ func (f *Files) Open(name string) (*File, error) {
 	}, nil
 }
 
+func (f *Files) Has(name string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, has := f.db.Files[name]
+	return has, nil
+}
+
 func (f *Files) Create(name string) (*File, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -97,6 +104,14 @@ func (f *Files) Create(name string) (*File, error) {
 		lastSectorID: -1,
 		fs:           f,
 	}, nil
+}
+
+func (f *Files) OpenOrCreate(name string) (*File, error) {
+	fi, err := f.Open(name)
+	if err == nil {
+		return fi, nil
+	}
+	return f.Create(name)
 }
 
 func (f *Files) Rename(oldName, newName string) error {
@@ -273,4 +288,85 @@ func (f *File) Write(p []byte) (n int, err error) {
 	f.File.Size += int64(l)
 	f.offset += int64(l)
 	return l, nil
+}
+
+func (f *Files) Get(name string) ([]byte, error) {
+	fi, err := f.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	p := make([]byte, fi.File.Size)
+	n, err := fi.Read(p)
+	if err != nil {
+		return nil, err
+	}
+	if n != int(fi.File.Size) {
+		return nil, fmt.Errorf("want to read %d, got %d", fi.File.Size, n)
+	}
+	return p, nil
+}
+
+func (f *Files) GetAt(name string, offset, size int) ([]byte, error) {
+	fi, err := f.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if offset < 0 || offset > int(fi.File.Size) {
+		return nil, fmt.Errorf("offset=%d, filesize=%d", offset, fi.File.Size)
+	}
+	if _, err := fi.Seek(int64(offset), io.SeekStart); err != nil {
+		return nil, fmt.Errorf("fi.Seek: %v", err)
+	}
+	p := make([]byte, size)
+	n, err := fi.Read(p)
+	if err != nil {
+		return nil, err
+	}
+	if n != size {
+		return nil, fmt.Errorf("want to read %d, got %d", size, n)
+	}
+	return p, nil
+}
+
+func (f *Files) Put(name string, value []byte) error {
+	fi, err := f.OpenOrCreate(name)
+	if err != nil {
+		return err
+	}
+	n, err := fi.Write(value)
+	if err != nil {
+		return err
+	}
+	if n != len(value) {
+		return fmt.Errorf("want to write %d, got %d", len(value), n)
+	}
+	return nil
+}
+
+func (f *Files) List() (map[string]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m := make(map[string]int)
+	for name, fi := range f.db.Files {
+		m[name] = int(fi.Size)
+	}
+	return m, nil
+}
+
+func (f *Files) Link(dstKey, srcKey string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fi, has := f.db.Files[srcKey]
+	if !has {
+		return fmt.Errorf("no such key: %q", srcKey)
+	}
+	f.db.Files[dstKey] = proto.Clone(fi).(*filesdb.File)
+	return nil
+}
+
+func (f *Files) Delete(key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.db.Files, key)
+	return nil
 }
