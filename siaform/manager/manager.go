@@ -393,10 +393,11 @@ func (m *Manager) WriteSector(i int64, data []byte) error {
 func (m *Manager) Start() error {
 	go m.continueUploads()
 	go func() {
-		for {
+		stopped := false
+		for !stopped {
 			select {
 			case <-m.stopChan:
-				break
+				stopped = true
 			case <-m.dataChan:
 				m.handlePending()
 			case set := <-m.setChan:
