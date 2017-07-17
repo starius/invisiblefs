@@ -130,6 +130,9 @@ func (s *SiaClient) Write(contractID string, data []byte) (string, error) {
 	req.Header.Set("User-Agent", "Sia-Agent")
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("client.Do: %v.", err)
+	}
 	defer resp.Body.Close()
 	body2, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
