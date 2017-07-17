@@ -105,9 +105,10 @@ func main() {
 	if err := mn.Start(); err != nil {
 		log.Fatalf("manager.Start: %v.", err)
 	}
-	go func() {
-	begin:
-		time.Sleep(10 * time.Second)
+	var saveMu sync.Mutex
+	save := func() {
+		saveMu.Lock()
+		defer saveMu.Unlock()
 		data, err := mn.DumpDb()
 		if err != nil {
 			log.Fatalf("mn.DumpDb: %v.", err)
@@ -122,7 +123,12 @@ func main() {
 		if err := ioutil.WriteFile(fiFile, data, 0600); err != nil {
 			log.Fatalf("ioutil.WriteFile(%q, ...): %v.", fiFile, err)
 		}
-		goto begin
+	}
+	go func() {
+		for {
+			time.Sleep(10 * time.Second)
+			save()
+		}
 	}()
 	if ks, err = kvsia.New(fi); err != nil {
 		log.Fatalf("kvsia.New: %v.", err)
@@ -150,7 +156,7 @@ func main() {
 				continue
 			}
 			fmt.Printf("Successfully written files.\n")
-			// TODO: write manager and files dumps.
+			save()
 			fmt.Printf("Closing the listener on %s.\n", *addr)
 			if err := ln.Close(); err != nil {
 				fmt.Printf("Failed to close the listener: %s.\n", err)
