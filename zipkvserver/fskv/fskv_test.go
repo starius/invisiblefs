@@ -1,6 +1,7 @@
 package fskv
 
 import (
+	"io/ioutil"
 	"os"
 	"testing"
 
@@ -8,7 +9,10 @@ import (
 )
 
 func TestEmpty(t *testing.T) {
-	dir := os.TempDir()
+	dir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatalf("ioutil.TempDir: %s.", err)
+	}
 	defer os.RemoveAll(dir)
 	kv, err := New(dir)
 	if err != nil {
@@ -18,7 +22,10 @@ func TestEmpty(t *testing.T) {
 }
 
 func TestPut(t *testing.T) {
-	dir := os.TempDir()
+	dir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatalf("ioutil.TempDir: %s.", err)
+	}
 	defer os.RemoveAll(dir)
 	kv, err := New(dir)
 	if err != nil {
@@ -28,7 +35,10 @@ func TestPut(t *testing.T) {
 }
 
 func TestPutLarge(t *testing.T) {
-	dir := os.TempDir()
+	dir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatalf("ioutil.TempDir: %s.", err)
+	}
 	defer os.RemoveAll(dir)
 	kv, err := New(dir)
 	if err != nil {
@@ -38,7 +48,10 @@ func TestPutLarge(t *testing.T) {
 }
 
 func TestPutMany(t *testing.T) {
-	dir := os.TempDir()
+	dir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatalf("ioutil.TempDir: %s.", err)
+	}
 	defer os.RemoveAll(dir)
 	kv, err := New(dir)
 	if err != nil {
@@ -48,7 +61,10 @@ func TestPutMany(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	dir := os.TempDir()
+	dir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatalf("ioutil.TempDir: %s.", err)
+	}
 	defer os.RemoveAll(dir)
 	kv, err := New(dir)
 	if err != nil {
