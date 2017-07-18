@@ -71,12 +71,13 @@ func (f *Files) Open(name string) (*File, error) {
 		return nil, fmt.Errorf("No file %q", name)
 	}
 	return &File{
-		offset:       0,
-		File:         f1,
-		manager:      f.manager,
-		sectorSize:   int(f.db.SectorSize),
-		lastSectorID: -1,
-		fs:           f,
+		offset:           0,
+		File:             f1,
+		manager:          f.manager,
+		sectorSize:       int(f.db.SectorSize),
+		lastSectorID:     -1,
+		fs:               f,
+		minSizeForSector: int(f.db.SectorSize) * 95 / 100,
 	}, nil
 }
 
@@ -97,12 +98,13 @@ func (f *Files) Create(name string) (*File, error) {
 	f1 := &filesdb.File{}
 	f.db.Files[name] = f1
 	return &File{
-		offset:       0,
-		File:         f1,
-		manager:      f.manager,
-		sectorSize:   int(f.db.SectorSize),
-		lastSectorID: -1,
-		fs:           f,
+		offset:           0,
+		File:             f1,
+		manager:          f.manager,
+		sectorSize:       int(f.db.SectorSize),
+		lastSectorID:     -1,
+		fs:               f,
+		minSizeForSector: int(f.db.SectorSize) * 95 / 100,
 	}, nil
 }
 
@@ -127,14 +129,15 @@ func (f *Files) Rename(oldName, newName string) error {
 }
 
 type File struct {
-	offset       int64
-	File         *filesdb.File
-	manager      *manager.Manager
-	sectorSize   int
-	lastSector   []byte
-	lastSectorID int64
-	fs           *Files
-	mu           sync.Mutex
+	offset           int64
+	File             *filesdb.File
+	manager          *manager.Manager
+	sectorSize       int
+	minSizeForSector int
+	lastSector       []byte
+	lastSectorID     int64
+	fs               *Files
+	mu               sync.Mutex
 }
 
 func (f *File) Seek(offset int64, whence int) (int64, error) {
@@ -179,10 +182,9 @@ func (f *File) Read(p []byte) (n int, err error) {
 	pbegin := f.offset
 	pend := pbegin + int64(len(p))
 	for _, piece := range f.File.Pieces {
-		offset := int64(0)
+		offset := int64(piece.Offset)
 		length := int64(f.sectorSize)
-		if len(piece.Sha256) != 0 {
-			offset = int64(piece.Offset)
+		if piece.Length != 0 {
 			length = int64(piece.Length)
 		}
 		fend := fbegin + length
@@ -246,7 +248,7 @@ func (f *File) Write(p []byte) (n int, err error) {
 		return 0, fmt.Errorf("too long write")
 	}
 	l := len(p)
-	if l != f.sectorSize {
+	if l < f.minSizeForSector {
 		f.fs.mu.Lock()
 		defer f.fs.mu.Unlock()
 		if len(f.fs.db.InProgress)+l > f.sectorSize {
@@ -277,13 +279,18 @@ func (f *File) Write(p []byte) (n int, err error) {
 			Length:   int32(l),
 		})
 	} else {
-		sectorID, err := f.manager.AddSector(p)
+		p1 := append(p, make([]byte, f.sectorSize-l)...)
+		sectorID, err := f.manager.AddSector(p1)
 		if err != nil {
 			return 0, fmt.Errorf("AddSector: %v", err)
 		}
-		f.File.Pieces = append(f.File.Pieces, &filesdb.Piece{
+		piece := &filesdb.Piece{
 			SectorId: sectorID,
-		})
+		}
+		if l != f.sectorSize {
+			piece.Length = int32(l)
+		}
+		f.File.Pieces = append(f.File.Pieces, piece)
 	}
 	f.File.Size += int64(l)
 	f.offset += int64(l)
