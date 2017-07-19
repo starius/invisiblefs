@@ -200,7 +200,13 @@ func (f *File) Read(p []byte) (n int, err error) {
 			//
 			sectorID := piece.SectorId
 			var part []byte
-			if len(piece.Sha256) == 0 {
+			f.fs.mu.Lock()
+			ip := f.fs.db.InProgress
+			ipsid := f.fs.db.InProgressSectorId
+			f.fs.mu.Unlock()
+			if sectorID == ipsid {
+				part = ip[sbegin:send]
+			} else if len(piece.Sha256) == 0 {
 				var sector []byte
 				if sectorID == f.lastSectorID {
 					sector = f.lastSector
@@ -214,21 +220,13 @@ func (f *File) Read(p []byte) (n int, err error) {
 				}
 				part = sector[sbegin:send]
 			} else {
-				f.fs.mu.Lock()
-				ip := f.fs.db.InProgress
-				ipsid := f.fs.db.InProgressSectorId
-				f.fs.mu.Unlock()
-				if sectorID == ipsid {
-					part = ip[sbegin:send]
-				} else {
-					part, err = f.manager.InsecureReadSectorAt(sectorID, int(sbegin), int(send-sbegin))
-					if err != nil {
-						return n, err
-					}
-					checksum := sha256.Sum256(part)
-					if !bytes.Equal(checksum[:], piece.Sha256) {
-						return n, fmt.Errorf("Checksum mismatch")
-					}
+				part, err = f.manager.InsecureReadSectorAt(sectorID, int(sbegin), int(send-sbegin))
+				if err != nil {
+					return n, err
+				}
+				checksum := sha256.Sum256(part)
+				if !bytes.Equal(checksum[:], piece.Sha256) {
+					return n, fmt.Errorf("Checksum mismatch")
 				}
 			}
 			nn := copy(r, part)
