@@ -150,6 +150,12 @@ func main() {
 		defer wg.Done()
 		for signal := range c {
 			fmt.Printf("Caught %s.\n", signal)
+			fmt.Printf("Closing the listener on %s.\n", *addr)
+			if err := ln.Close(); err != nil {
+				fmt.Printf("Failed to close the listener: %s.\n", err)
+				continue
+			}
+			fmt.Printf("Successfully closed the listener.\n")
 			fmt.Printf("Writting the remaining files.\n")
 			if err := ks.Sync(); err != nil {
 				fmt.Printf("Failed to write: %s.\n", err)
@@ -157,12 +163,6 @@ func main() {
 			}
 			fmt.Printf("Successfully written files.\n")
 			save()
-			fmt.Printf("Closing the listener on %s.\n", *addr)
-			if err := ln.Close(); err != nil {
-				fmt.Printf("Failed to close the listener: %s.\n", err)
-				continue
-			}
-			fmt.Printf("Successfully closed the listener.\n")
 			fmt.Printf("Exiting.\n")
 			return
 		}
