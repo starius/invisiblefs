@@ -653,9 +653,7 @@ func (m *Manager) addParity(set *Set) {
 }
 
 func (m *Manager) uploadSector(sector *Sector, contract string) error {
-	data := make([]byte, m.sectorSize)
-	copy(data, sector.Data)
-	sectorRoot, err := m.siaclient.Write(contract, data, sector.id)
+	sectorRoot, err := m.siaclient.Write(contract, sector.Data, sector.id)
 	if err != nil {
 		m.lastFailureMu.Lock()
 		m.lastFailure[contract] = time.Now()
