@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/starius/invisiblefs/kvsia"
+	"github.com/starius/invisiblefs/siaform/cache"
 	"github.com/starius/invisiblefs/siaform/crypto"
 	"github.com/starius/invisiblefs/siaform/files"
 	"github.com/starius/invisiblefs/siaform/manager"
@@ -30,6 +31,7 @@ var (
 	ndata      = flag.Int("ndata", 10, "Number of data sectors in a group")
 	nparity    = flag.Int("nparity", 10, "Number of parity sectors in a group")
 	sectorSize = flag.Int("sector-size", 4*1024*1024, "Sia block size")
+	cacheSize  = flag.Int("cache-size", 100, "Size of LRU cache, in sectors")
 	dataDir    = flag.String("data-dir", "data-dir", "Directory to store databases")
 	keyFile    = flag.String("key-file", "", "File with key ('disable' to disable encryption)")
 
@@ -58,6 +60,12 @@ func main() {
 		sc, err = crypto.New(key, sc)
 		if err != nil {
 			log.Fatalf("crypto.New: %v.", err)
+		}
+	}
+	if *cacheSize > 0 {
+		sc, err = cache.New(*cacheSize, sc)
+		if err != nil {
+			log.Fatalf("cache.New: %v.", err)
 		}
 	}
 	if _, err := os.Stat(mnFile); !os.IsNotExist(err) {
