@@ -169,6 +169,13 @@ func main() {
 			save()
 			fmt.Printf("Successfully saved local databases.\n")
 			//
+			fmt.Printf("Sending sector in progress to manager.\n")
+			if err := fi.UploadSectorInProgress(); err != nil {
+				fmt.Printf("Failed to send sector in progress to manager: %s.\n", err)
+				continue
+			}
+			fmt.Printf("Successfully sent sector in progress to manager.\n")
+			//
 			fmt.Printf("Sending pending sectors to upload.\n")
 			mn.UploadAllPending()
 			fmt.Printf("Successfully sent pending sectors to upload.\n")

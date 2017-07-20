@@ -128,6 +128,28 @@ func (f *Files) Rename(oldName, newName string) error {
 	return nil
 }
 
+func (f *Files) UploadSectorInProgress() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.uploadSectorInProgress()
+}
+
+func (f *Files) uploadSectorInProgress() error {
+	if len(f.db.InProgress) == 0 {
+		return nil
+	}
+	// Upload previous in_progress sector.
+	nz := int(f.db.SectorSize) - len(f.db.InProgress)
+	ip := append(f.db.InProgress, make([]byte, nz)...)
+	ipsid := f.db.InProgressSectorId
+	if err := f.manager.WriteSector(ipsid, ip); err != nil {
+		return fmt.Errorf("WriteSector: %v", err)
+	}
+	f.db.InProgress = nil
+	f.db.InProgressSectorId = 0
+	return nil
+}
+
 type File struct {
 	offset           int64
 	File             *filesdb.File
@@ -251,14 +273,7 @@ func (f *File) Write(p []byte) (n int, err error) {
 		defer f.fs.mu.Unlock()
 		if len(f.fs.db.InProgress)+l > f.sectorSize {
 			// Upload previous in_progress sector.
-			nz := f.sectorSize - len(f.fs.db.InProgress)
-			ip := append(f.fs.db.InProgress, make([]byte, nz)...)
-			ipsid := f.fs.db.InProgressSectorId
-			if err := f.manager.WriteSector(ipsid, ip); err != nil {
-				return 0, fmt.Errorf("WriteSector: %v", err)
-			}
-			f.fs.db.InProgress = nil
-			f.fs.db.InProgressSectorId = 0
+			f.fs.uploadSectorInProgress()
 		}
 		if f.fs.db.InProgressSectorId == 0 {
 			sectorID, err := f.manager.AllocateSector()
