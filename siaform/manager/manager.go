@@ -14,7 +14,6 @@ import (
 	"github.com/klauspost/reedsolomon"
 	"github.com/starius/invisiblefs/gzip"
 	"github.com/starius/invisiblefs/siaform/managerdb"
-	"github.com/starius/invisiblefs/siaform/siaclient"
 )
 
 func hex2bytes(data string) []byte {
@@ -48,6 +47,12 @@ type Cipher interface {
 	Decrypt(sectorID int64, data []byte)
 }
 
+type SiaClient interface {
+	Contracts() ([]string, error)
+	Read(contractID, sectorRoot string) ([]byte, error)
+	Write(contractID string, data []byte) (string, error)
+}
+
 type Manager struct {
 	sectors map[int64]*Sector
 	sets    []*Set
@@ -55,7 +60,7 @@ type Manager struct {
 	pending []*Sector
 	mu      sync.Mutex
 
-	siaclient *siaclient.SiaClient
+	siaclient SiaClient
 	cipher    Cipher
 
 	readsHistory   map[string]*managerdb.Latency
@@ -71,7 +76,7 @@ type Manager struct {
 	stopChan chan struct{}
 }
 
-func New(ndata, nparity, sectorSize int, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error) {
+func New(ndata, nparity, sectorSize int, sc SiaClient, cipher Cipher) (*Manager, error) {
 	return &Manager{
 		sectors:      make(map[int64]*Sector),
 		next:         1,
@@ -88,7 +93,7 @@ func New(ndata, nparity, sectorSize int, sc *siaclient.SiaClient, cipher Cipher)
 	}, nil
 }
 
-func Load(zdump []byte, sc *siaclient.SiaClient, cipher Cipher) (*Manager, error) {
+func Load(zdump []byte, sc SiaClient, cipher Cipher) (*Manager, error) {
 	dump, err := gzip.Gunzip(zdump)
 	if err != nil {
 		return nil, fmt.Errorf("gzip.Gunzip(zdump): %v", err)
