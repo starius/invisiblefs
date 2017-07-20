@@ -33,56 +33,44 @@ var (
 	dataDir    = flag.String("data-dir", "data-dir", "Directory to store databases")
 	keyFile    = flag.String("key-file", "", "File with key ('disable' to disable encryption)")
 
-	sc *siaclient.SiaClient
-	ci manager.Cipher
 	mn *manager.Manager
 	fi *files.Files
 	ks *kvsia.KvSia
 )
 
-type NoopCipher struct {
-}
-
-func (n *NoopCipher) Encrypt(sectorID int64, data []byte) {
-}
-
-func (n *NoopCipher) Decrypt(sectorID int64, data []byte) {
-}
-
 func main() {
 	flag.Parse()
+	mnFile := filepath.Join(*dataDir, "manager.db")
+	fiFile := filepath.Join(*dataDir, "files.db")
+	var err error
+	var sc manager.SiaClient
+	sc, err = siaclient.New(*siaAddr, &http.Client{})
+	if err != nil {
+		log.Fatalf("siaclient.New: %v.", err)
+	}
 	if *keyFile == "" {
 		log.Fatalf("Specify -key-file")
-	} else if *keyFile == "disable" {
-		ci = &NoopCipher{}
-	} else {
+	} else if *keyFile != "disable" {
 		key, err := ioutil.ReadFile(*keyFile)
 		if err != nil {
 			log.Fatalf("ioutil.ReadFile(%q): %v.", *keyFile, err)
 		}
-		ci, err = crypto.New(key)
+		sc, err = crypto.New(key, sc)
 		if err != nil {
 			log.Fatalf("crypto.New: %v.", err)
 		}
-	}
-	mnFile := filepath.Join(*dataDir, "manager.db")
-	fiFile := filepath.Join(*dataDir, "files.db")
-	var err error
-	sc, err = siaclient.New(*siaAddr, &http.Client{})
-	if err != nil {
-		log.Fatalf("siaclient.New: %v.", err)
 	}
 	if _, err := os.Stat(mnFile); !os.IsNotExist(err) {
 		data, err := ioutil.ReadFile(mnFile)
 		if err != nil {
 			log.Fatalf("ioutil.ReadFile(%q): %v.", mnFile, err)
 		}
-		mn, err = manager.Load(data, sc, ci)
+		mn, err = manager.Load(data, sc)
 		if err != nil {
 			log.Fatalf("manager.Load: %v.", err)
 		}
 	} else {
-		mn, err = manager.New(*ndata, *nparity, *sectorSize, sc, ci)
+		mn, err = manager.New(*ndata, *nparity, *sectorSize, sc)
 		if err != nil {
 			log.Fatalf("manager.New: %v.", err)
 		}

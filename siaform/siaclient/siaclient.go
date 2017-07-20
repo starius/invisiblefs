@@ -70,7 +70,7 @@ type readJson struct {
 	Message string
 }
 
-func (s *SiaClient) Read(contractID, sectorRoot string) ([]byte, error) {
+func (s *SiaClient) Read(contractID, sectorRoot string, i int64) ([]byte, error) {
 	path2 := "/renter/read/" + contractID + "/" + sectorRoot
 	req := &http.Request{
 		Method: "GET",
@@ -107,7 +107,7 @@ type writeJson struct {
 	Message    string
 }
 
-func (s *SiaClient) Write(contractID string, data []byte) (string, error) {
+func (s *SiaClient) Write(contractID string, data []byte, i int64) (string, error) {
 	log.Printf("SiaClient.Write(%q) start\n", contractID)
 	defer log.Printf("SiaClient.Write(%q) stop\n", contractID)
 	body := &bytes.Buffer{}

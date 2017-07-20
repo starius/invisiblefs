@@ -12,7 +12,7 @@ type Cipher struct {
 	b cipher.Block
 }
 
-func New(key []byte) (*Cipher, error) {
+func NewCipher(key []byte) (*Cipher, error) {
 	h := sha256.Sum256(key)
 	b, err := aes.NewCipher(h[:])
 	if err != nil {
