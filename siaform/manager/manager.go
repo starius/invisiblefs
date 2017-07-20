@@ -418,6 +418,50 @@ func (m *Manager) Stop() error {
 	return nil
 }
 
+func (m *Manager) UploadAllPending() {
+	var newSets []*Set
+	m.mu.Lock()
+	for len(m.pending) > 0 {
+		newSets = append(newSets, m.formParitySet())
+	}
+	m.mu.Unlock()
+	if len(newSets) == 0 {
+		return
+	}
+	for _, set := range newSets {
+		m.setChan <- set
+		log.Printf("Uploading incomplete parity set from pending")
+	}
+}
+
+func (m *Manager) WaitForUploading() {
+	log.Printf("Waiting for the incomplete parity sets to upload.")
+	for {
+		time.Sleep(time.Second)
+		allUploaded := true
+		m.mu.Lock()
+		for _, set := range m.sets {
+			for _, sector := range set.DataSectors {
+				if sector.Contract == "" {
+					allUploaded = false
+				}
+			}
+			for _, sector := range set.ParitySectors {
+				if sector.Contract == "" {
+					allUploaded = false
+				}
+			}
+		}
+		m.mu.Unlock()
+		if allUploaded {
+			log.Printf("All sectors were uploaded.")
+			return
+		} else {
+			log.Printf("Still uploading pending sectors.")
+		}
+	}
+}
+
 func (m *Manager) continueUploads() {
 	sets := make(map[*Set]struct{})
 	m.mu.Lock()
@@ -442,25 +486,36 @@ func (m *Manager) handlePending() {
 	var newSets []*Set
 	m.mu.Lock()
 	for len(m.pending) >= m.ndata {
-		set := &Set{
-			DataSectors: m.pending[:m.ndata],
-		}
-		m.pending = m.pending[m.ndata:]
-		m.addParity(set)
-		for _, sector := range set.DataSectors {
-			sector.set = set
-		}
-		for _, sector := range set.ParitySectors {
-			sector.set = set
-		}
-		m.sets = append(m.sets, set)
-		newSets = append(newSets, set)
-		log.Printf("Formed parity set.")
+		newSets = append(newSets, m.formParitySet())
 	}
 	m.mu.Unlock()
 	for _, set := range newSets {
 		m.setChan <- set
 	}
+}
+
+func (m *Manager) formParitySet() *Set {
+	ndata := m.ndata
+	if ndata > len(m.pending) {
+		ndata = len(m.pending)
+	}
+	if ndata == 0 {
+		panic("ndata == 0")
+	}
+	set := &Set{
+		DataSectors: m.pending[:ndata],
+	}
+	m.pending = m.pending[ndata:]
+	m.addParity(set)
+	for _, sector := range set.DataSectors {
+		sector.set = set
+	}
+	for _, sector := range set.ParitySectors {
+		sector.set = set
+	}
+	m.sets = append(m.sets, set)
+	log.Printf("Formed parity set.")
+	return set
 }
 
 func (m *Manager) handleSet(set *Set) {
@@ -570,9 +625,10 @@ func (m *Manager) uploadSet(set *Set) error {
 func (m *Manager) addParity(set *Set) {
 	// Run under m.mu.Lock().
 	var datas [][]byte
-	if len(set.DataSectors) != m.ndata {
-		panic("len(set.DataSectors) != m.ndata")
+	if len(set.DataSectors) == 0 {
+		panic("len(set.DataSectors) == 0")
 	}
+	ndata := len(set.DataSectors)
 	for _, sector := range set.DataSectors {
 		if len(sector.Data) != m.sectorSize {
 			panic("len(sector.Data) != m.sectorSize")
@@ -582,7 +638,7 @@ func (m *Manager) addParity(set *Set) {
 	for j := 0; j < m.nparity; j++ {
 		datas = append(datas, make([]byte, m.sectorSize))
 	}
-	rs, err := reedsolomon.New(m.ndata, m.nparity)
+	rs, err := reedsolomon.New(ndata, m.nparity)
 	if err != nil {
 		panic(fmt.Sprintf("reedsolomon.New: %v", err))
 	}
@@ -593,7 +649,7 @@ func (m *Manager) addParity(set *Set) {
 		i := m.next
 		m.next++
 		sector := &Sector{
-			Data: datas[m.ndata+j],
+			Data: datas[ndata+j],
 			id:   i,
 			set:  set,
 		}

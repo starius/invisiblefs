@@ -141,32 +141,65 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to listen: %s.", err)
 	}
+	finished := false
+	var finishedMu sync.Mutex
 	// Handle signals - close file.
 	c := make(chan os.Signal, 2)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	var wg sync.WaitGroup
+	defer wg.Wait()
 	go func() {
 		wg.Add(1)
 		defer wg.Done()
 		for signal := range c {
 			fmt.Printf("Caught %s.\n", signal)
+			//
+			finishedMu.Lock()
+			finished = true
+			finishedMu.Unlock()
+			//
 			fmt.Printf("Closing the listener on %s.\n", *addr)
 			if err := ln.Close(); err != nil {
 				fmt.Printf("Failed to close the listener: %s.\n", err)
 				continue
 			}
 			fmt.Printf("Successfully closed the listener.\n")
-			fmt.Printf("Writting the remaining files.\n")
-			if err := ks.Sync(); err != nil {
-				fmt.Printf("Failed to write: %s.\n", err)
+			//
+			fmt.Printf("Saving local databases.\n")
+			save()
+			fmt.Printf("Successfully saved local databases.\n")
+			//
+			fmt.Printf("Sending pending sectors to upload.\n")
+			mn.UploadAllPending()
+			fmt.Printf("Successfully sent pending sectors to upload.\n")
+			//
+			fmt.Printf("Waiting for everything to upload.\n")
+			mn.WaitForUploading()
+			fmt.Printf("Successfully uploaded everything.\n")
+			//
+			fmt.Printf("Stopping manager.\n")
+			if err := mn.Stop(); err != nil {
+				fmt.Printf("Failed to stop the manager: %s.\n", err)
 				continue
 			}
-			fmt.Printf("Successfully written files.\n")
+			fmt.Printf("Successfully stopped manager.\n")
+			//
+			fmt.Printf("Saving local databases again.\n")
 			save()
+			fmt.Printf("Successfully saved local databases.\n")
+			//
 			fmt.Printf("Exiting.\n")
 			return
 		}
 	}()
 	http.Handle("/", handler)
-	log.Fatal(http.Serve(ln, nil))
+	err = http.Serve(ln, nil)
+	time.Sleep(time.Second)
+	finishedMu.Lock()
+	finished1 := finished
+	finishedMu.Unlock()
+	if finished1 {
+		return
+	}
+	log.Fatal(err)
 }
