@@ -497,8 +497,11 @@ func (m *Manager) formParitySet() *Set {
 		panic("ndata == 0")
 	}
 	set := &Set{
-		DataSectors: m.pending[:ndata],
+		DataSectors: make([]*Sector, ndata),
 	}
+	// Don't put slice of m.pending to set.DataSectors because both of
+	// them can modify it with append corrupting data of each other.
+	copy(set.DataSectors, m.pending[:ndata])
 	m.pending = m.pending[ndata:]
 	m.addParity(set)
 	for _, sector := range set.DataSectors {
