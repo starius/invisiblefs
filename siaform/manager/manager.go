@@ -386,7 +386,10 @@ func (m *Manager) WriteSector(i int64, data []byte) error {
 
 func (m *Manager) Start() error {
 	go m.continueUploads()
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		stopped := false
 		for !stopped {
 			select {
@@ -394,10 +397,24 @@ func (m *Manager) Start() error {
 				stopped = true
 			case <-m.dataChan:
 				m.handlePending()
+			}
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		stopped := false
+		for !stopped {
+			select {
+			case <-m.stopChan:
+				stopped = true
 			case set := <-m.setChan:
 				go m.handleSet(set)
 			}
 		}
+	}()
+	go func() {
+		wg.Wait()
 		// Ingest all data from channels to unblock goroutines.
 		for _ = range m.dataChan {
 		}
