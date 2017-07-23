@@ -679,8 +679,6 @@ func (m *Manager) uploadSector(sector *Sector, contract string) error {
 		m.lastFailureMu.Lock()
 		m.lastFailure[contract] = time.Now()
 		m.lastFailureMu.Unlock()
-	}
-	if err != nil {
 		return fmt.Errorf("siaclient.Write(%q): %v.", contract, err)
 	}
 	m.mu.Lock()
