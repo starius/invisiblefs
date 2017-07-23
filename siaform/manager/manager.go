@@ -28,20 +28,6 @@ func bytes2hex(data []byte) string {
 	return hex.EncodeToString(data)
 }
 
-type Sector struct {
-	Contract   string
-	MerkleRoot string
-	Data       []byte
-
-	isData bool
-	set    *Set
-	id     int64
-}
-
-type Set struct {
-	DataSectors, ParitySectors []*Sector
-}
-
 type SiaClient interface {
 	Contracts() ([]string, error)
 	Read(contractID, sectorRoot string, sectorID int64) ([]byte, error)
@@ -49,15 +35,13 @@ type SiaClient interface {
 }
 
 type Manager struct {
-	sectors map[int64]*Sector
-	sets    []*Set
-	next    int64
-	pending []*Sector
-	mu      sync.Mutex
+	db         *managerdb.Db
+	next       int64
+	sector2set map[int64]int
+	mu         sync.Mutex // db.Sectors, db.Sets, db.Pending.
 
 	siaclient SiaClient
 
-	readsHistory   map[string]*managerdb.Latency
 	readsHistoryMu sync.Mutex
 
 	lastFailure   map[string]time.Time
@@ -66,25 +50,32 @@ type Manager struct {
 	ndata, nparity, sectorSize int
 
 	dataChan chan struct{}
-	setChan  chan *Set
+	setChan  chan int
 	stopChan chan struct{}
 	finChan  chan struct{}
 }
 
 func New(ndata, nparity, sectorSize int, sc SiaClient) (*Manager, error) {
+	db := &managerdb.Db{
+		Sectors:      make(map[int64]*managerdb.Sector),
+		Ndata:        int32(ndata),
+		Nparity:      int32(nparity),
+		SectorSize:   int32(sectorSize),
+		ReadsHistory: make(map[string]*managerdb.Latency),
+	}
 	return &Manager{
-		sectors:      make(map[int64]*Sector),
-		next:         1,
-		ndata:        ndata,
-		nparity:      nparity,
-		sectorSize:   sectorSize,
-		siaclient:    sc,
-		readsHistory: make(map[string]*managerdb.Latency),
-		lastFailure:  make(map[string]time.Time),
-		dataChan:     make(chan struct{}, 100),
-		setChan:      make(chan *Set, 100),
-		stopChan:     make(chan struct{}),
-		finChan:      make(chan struct{}),
+		db:          db,
+		next:        1,
+		ndata:       ndata,
+		nparity:     nparity,
+		sectorSize:  sectorSize,
+		siaclient:   sc,
+		sector2set:  make(map[int64]int),
+		lastFailure: make(map[string]time.Time),
+		dataChan:    make(chan struct{}, 100),
+		setChan:     make(chan int, 100),
+		stopChan:    make(chan struct{}),
+		finChan:     make(chan struct{}),
 	}, nil
 }
 
@@ -98,87 +89,44 @@ func Load(zdump []byte, sc SiaClient) (*Manager, error) {
 		return nil, fmt.Errorf("proto.Unmarshal(dump, db): %v", err)
 	}
 	m := &Manager{
-		sectors:      make(map[int64]*Sector),
-		siaclient:    sc,
-		readsHistory: db.ReadsHistory,
-		lastFailure:  make(map[string]time.Time),
-		dataChan:     make(chan struct{}, 100),
-		setChan:      make(chan *Set, 100),
-		stopChan:     make(chan struct{}),
-		finChan:      make(chan struct{}),
-		ndata:        int(db.Ndata),
-		nparity:      int(db.Nparity),
-		sectorSize:   int(db.SectorSize),
+		db:          db,
+		siaclient:   sc,
+		lastFailure: make(map[string]time.Time),
+		sector2set:  make(map[int64]int),
+		dataChan:    make(chan struct{}, 100),
+		setChan:     make(chan int, 100),
+		stopChan:    make(chan struct{}),
+		finChan:     make(chan struct{}),
+		ndata:       int(db.Ndata),
+		nparity:     int(db.Nparity),
+		sectorSize:  int(db.SectorSize),
 	}
-	if m.readsHistory == nil {
-		m.readsHistory = make(map[string]*managerdb.Latency)
+	if m.db.Sectors == nil {
+		m.db.Sectors = make(map[int64]*managerdb.Sector)
+	}
+	if m.db.ReadsHistory == nil {
+		m.db.ReadsHistory = make(map[string]*managerdb.Latency)
 	}
 	maxI := int64(0)
-	for i, sector := range db.Sectors {
+	for i := range m.db.Sectors {
 		if i > maxI {
 			maxI = i
 		}
-		m.sectors[i] = &Sector{
-			Contract:   bytes2hex(sector.Contract),
-			MerkleRoot: bytes2hex(sector.MerkleRoot),
-			Data:       sector.Data,
-			id:         i,
-		}
 	}
 	m.next = maxI + 1
-	for _, set := range db.Sets {
-		set1 := &Set{}
+	for j, set := range m.db.Sets {
 		for _, i := range set.DataIds {
-			sector := m.sectors[i]
-			set1.DataSectors = append(set1.DataSectors, sector)
-			sector.set = set1
-			sector.isData = true
+			m.sector2set[i] = j
 		}
 		for _, i := range set.ParityIds {
-			sector := m.sectors[i]
-			set1.ParitySectors = append(set1.ParitySectors, sector)
-			sector.set = set1
+			m.sector2set[i] = j
 		}
-		m.sets = append(m.sets, set1)
-	}
-	for _, i := range db.Pending {
-		m.pending = append(m.pending, m.sectors[i])
-		m.sectors[i].isData = true
 	}
 	return m, nil
 }
 
 func (m *Manager) DumpDb() ([]byte, error) {
-	db := &managerdb.Db{
-		Sectors:      make(map[int64]*managerdb.Sector),
-		Ndata:        int32(m.ndata),
-		Nparity:      int32(m.nparity),
-		SectorSize:   int32(m.sectorSize),
-		ReadsHistory: m.readsHistory,
-	}
-	m.mu.Lock()
-	for i, sector := range m.sectors {
-		db.Sectors[i] = &managerdb.Sector{
-			Contract:   hex2bytes(sector.Contract),
-			MerkleRoot: hex2bytes(sector.MerkleRoot),
-			Data:       sector.Data,
-		}
-	}
-	for _, set := range m.sets {
-		set1 := &managerdb.Set{}
-		for _, sector := range set.DataSectors {
-			set1.DataIds = append(set1.DataIds, sector.id)
-		}
-		for _, sector := range set.ParitySectors {
-			set1.ParityIds = append(set1.ParityIds, sector.id)
-		}
-		db.Sets = append(db.Sets, set1)
-	}
-	for _, sector := range m.pending {
-		db.Pending = append(db.Pending, sector.id)
-	}
-	m.mu.Unlock()
-	dump, err := proto.Marshal(db)
+	dump, err := proto.Marshal(m.db)
 	if err != nil {
 		return nil, fmt.Errorf("proto.Marshal: %v", err)
 	}
@@ -192,14 +140,11 @@ func (m *Manager) DumpDb() ([]byte, error) {
 func (m *Manager) getSector(i int64) (string, string, []byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	sector, has := m.sectors[i]
+	sector, has := m.db.Sectors[i]
 	if !has {
 		return "", "", nil, fmt.Errorf("No such sector: %d", i)
 	}
-	if !sector.isData {
-		return "", "", nil, fmt.Errorf("The sector %d is not data", i)
-	}
-	return sector.Contract, sector.MerkleRoot, sector.Data, nil
+	return bytes2hex(sector.Contract), bytes2hex(sector.MerkleRoot), sector.Data, nil
 }
 
 func (m *Manager) load(i int64, contract, sectorRoot string) ([]byte, error) {
@@ -211,10 +156,10 @@ func (m *Manager) load(i int64, contract, sectorRoot string) ([]byte, error) {
 	data, err := m.siaclient.Read(contract, sectorRoot, i)
 	latency := time.Since(t1)
 	m.readsHistoryMu.Lock()
-	l, has := m.readsHistory[contract]
+	l, has := m.db.ReadsHistory[contract]
 	if !has {
 		l = &managerdb.Latency{}
-		m.readsHistory[contract] = l
+		m.db.ReadsHistory[contract] = l
 	}
 	l.TotalMs += latency.Nanoseconds() / 1e6
 	l.Count++
@@ -225,6 +170,13 @@ func (m *Manager) load(i int64, contract, sectorRoot string) ([]byte, error) {
 	return data, err
 }
 
+type sectorData struct {
+	id         int64
+	contract   string
+	merkleRoot string
+	data       []byte
+}
+
 type event struct {
 	j    int
 	data []byte
@@ -232,41 +184,43 @@ type event struct {
 
 func (m *Manager) recoverData(i int64) ([]byte, error) {
 	m.mu.Lock()
-	sector, has := m.sectors[i]
+	_, has := m.db.Sectors[i]
 	if !has {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("unknown sector %d", i)
 	}
-	set := sector.set
-	if set == nil {
+	setIndex, has := m.sector2set[i]
+	if !has {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("sector %d not in set", i)
 	}
-	group := []Sector{}
-	all := append(set.DataSectors, set.ParitySectors...)
-	for _, sector := range all {
-		group = append(group, Sector{
-			id:         sector.id,
-			Contract:   sector.Contract,
-			MerkleRoot: sector.MerkleRoot,
-			Data:       sector.Data,
+	set := m.db.Sets[setIndex]
+	group := []sectorData{}
+	all := append(set.DataIds, set.ParityIds...)
+	for _, si := range all {
+		sector := m.db.Sectors[si]
+		group = append(group, sectorData{
+			id:         si,
+			contract:   bytes2hex(sector.Contract),
+			merkleRoot: bytes2hex(sector.MerkleRoot),
+			data:       sector.Data,
 		})
 	}
-	ndata := len(set.DataSectors)
-	nparity := len(set.ParitySectors)
+	ndata := len(set.DataIds)
+	nparity := len(set.ParityIds)
 	m.mu.Unlock()
 	events := make(chan event, ndata+nparity)
 	for j, s := range group {
-		if s.Data != nil {
-			events <- event{j, s.Data}
+		if s.data != nil {
+			events <- event{j, s.data}
 			continue
 		}
-		go func(j int, s Sector) {
-			data, err := m.load(s.id, s.Contract, s.MerkleRoot)
+		go func(j int, s sectorData) {
+			data, err := m.load(s.id, s.contract, s.merkleRoot)
 			if err == nil {
 				events <- event{j, data}
 			} else {
-				log.Printf("Failed to load sector %d from %q", s.id, s.Contract)
+				log.Printf("Failed to load sector %d from %q", s.id, s.contract)
 				events <- event{j, nil}
 			}
 		}(j, s)
@@ -357,7 +311,7 @@ func (m *Manager) AllocateSector() (int64, error) {
 	m.mu.Lock()
 	i := m.next
 	m.next++
-	m.sectors[i] = &Sector{}
+	m.db.Sectors[i] = &managerdb.Sector{}
 	m.mu.Unlock()
 	log.Printf("Allocated sector %d", i)
 	return i, nil
@@ -368,19 +322,17 @@ func (m *Manager) WriteSector(i int64, data []byte) error {
 		return fmt.Errorf("data length is %d", len(data))
 	}
 	m.mu.Lock()
-	sector, has := m.sectors[i]
+	sector, has := m.db.Sectors[i]
 	if !has {
 		m.mu.Unlock()
 		return fmt.Errorf("sector %d not found", i)
 	}
-	if sector.Data != nil || sector.Contract != "" {
+	if len(sector.Data) != 0 || len(sector.Contract) != 0 {
 		m.mu.Unlock()
 		return fmt.Errorf("sector %d is not empty", i)
 	}
 	sector.Data = data
-	sector.id = i
-	sector.isData = true
-	m.pending = append(m.pending, sector)
+	m.db.Pending = append(m.db.Pending, i)
 	m.mu.Unlock()
 	log.Printf("Filled sector with data: %d", i)
 	m.dataChan <- struct{}{}
@@ -411,8 +363,8 @@ func (m *Manager) Start() error {
 			select {
 			case <-m.stopChan:
 				stopped = true
-			case set := <-m.setChan:
-				go m.handleSet(set)
+			case setIndex := <-m.setChan:
+				go m.handleSet(setIndex)
 			}
 		}
 	}()
@@ -440,17 +392,17 @@ func (m *Manager) Stop() error {
 }
 
 func (m *Manager) UploadAllPending() {
-	var newSets []*Set
+	var newSets []int
 	m.mu.Lock()
-	for len(m.pending) > 0 {
+	for len(m.db.Pending) > 0 {
 		newSets = append(newSets, m.formParitySet())
 	}
 	m.mu.Unlock()
 	if len(newSets) == 0 {
 		return
 	}
-	for _, set := range newSets {
-		m.setChan <- set
+	for _, setIndex := range newSets {
+		m.setChan <- setIndex
 		log.Printf("Uploading incomplete parity set from pending")
 	}
 }
@@ -461,14 +413,16 @@ func (m *Manager) WaitForUploading() {
 		time.Sleep(time.Second)
 		allUploaded := true
 		m.mu.Lock()
-		for _, set := range m.sets {
-			for _, sector := range set.DataSectors {
-				if sector.Contract == "" {
+		for _, set := range m.db.Sets {
+			for _, si := range set.DataIds {
+				sector := m.db.Sectors[si]
+				if len(sector.Contract) == 0 {
 					allUploaded = false
 				}
 			}
-			for _, sector := range set.ParitySectors {
-				if sector.Contract == "" {
+			for _, si := range set.ParityIds {
+				sector := m.db.Sectors[si]
+				if len(sector.Contract) == 0 {
 					allUploaded = false
 				}
 			}
@@ -484,98 +438,120 @@ func (m *Manager) WaitForUploading() {
 }
 
 func (m *Manager) continueUploads() {
-	sets := make(map[*Set]struct{})
+	sets := make(map[int]struct{})
 	m.mu.Lock()
-	for _, sector := range m.sectors {
-		if sector.set != nil && len(sector.Contract) == 0 {
-			sets[sector.set] = struct{}{}
-		}
-		if sector.Data != nil {
-			s := *sector
-			s.Data = nil
-			log.Printf("Sector with data: %#v", s)
+	for si, sector := range m.db.Sectors {
+		setIndex, has := m.sector2set[si]
+		if has && len(sector.Contract) == 0 {
+			sets[setIndex] = struct{}{}
 		}
 	}
 	m.mu.Unlock()
-	for set := range sets {
+	for setIndex := range sets {
 		log.Printf("Handling a parity set.")
-		m.setChan <- set
+		m.setChan <- setIndex
 	}
 }
 
 func (m *Manager) handlePending() {
-	var newSets []*Set
+	var newSets []int
 	m.mu.Lock()
-	for len(m.pending) >= m.ndata {
+	for len(m.db.Pending) >= m.ndata {
 		newSets = append(newSets, m.formParitySet())
 	}
 	m.mu.Unlock()
-	for _, set := range newSets {
-		m.setChan <- set
+	for _, setIndex := range newSets {
+		m.setChan <- setIndex
 	}
 }
 
-func (m *Manager) formParitySet() *Set {
+func (m *Manager) formParitySet() int {
 	// Run under m.mu.Lock().
 	ndata := m.ndata
-	if ndata > len(m.pending) {
-		ndata = len(m.pending)
+	if ndata > len(m.db.Pending) {
+		ndata = len(m.db.Pending)
 	}
 	if ndata == 0 {
 		panic("ndata == 0")
 	}
-	set := &Set{
-		DataSectors: make([]*Sector, ndata),
+	set := &managerdb.Set{
+		DataIds: make([]int64, ndata),
 	}
-	// Don't put slice of m.pending to set.DataSectors because both of
+	// Don't put slice of Pending to set.DataIds because both of
 	// them can modify it with append corrupting data of each other.
-	copy(set.DataSectors, m.pending[:ndata])
-	m.pending = m.pending[ndata:]
-	m.addParity(set)
-	for _, sector := range set.DataSectors {
-		sector.set = set
+	copy(set.DataIds, m.db.Pending[:ndata])
+	m.db.Pending = m.db.Pending[ndata:]
+	// Add sectors to the set.
+	setIndex := len(m.db.Sets)
+	m.db.Sets = append(m.db.Sets, set)
+	m.addParity(setIndex)
+	for _, si := range set.DataIds {
+		m.sector2set[si] = setIndex
 	}
-	for _, sector := range set.ParitySectors {
-		sector.set = set
+	for _, si := range set.ParityIds {
+		m.sector2set[si] = setIndex
 	}
-	m.sets = append(m.sets, set)
 	log.Printf("Formed parity set.")
-	return set
+	return setIndex
 }
 
-func (m *Manager) handleSet(set *Set) {
+func (m *Manager) handleSet(setIndex int) {
 	log.Printf("Uploading a parity set")
-	if err := m.uploadSet(set); err != nil {
+	if err := m.uploadSet(setIndex); err != nil {
 		log.Printf("m.uploadSet: %v.", err)
 		time.Sleep(time.Second)
-		m.setChan <- set
+		m.setChan <- setIndex
 		return
 	}
 	log.Printf("Uploaded parity set.")
 }
 
-func (m *Manager) uploadSet(set *Set) error {
-	all := append(set.DataSectors, set.ParitySectors...)
+type indexedSector struct {
+	sector *managerdb.Sector
+	id     int64
+}
+
+func (m *Manager) uploadSet(setIndex int) error {
+	var dataSectors0, paritySectors0 []indexedSector
+	m.mu.Lock()
+	set := m.db.Sets[setIndex]
+	for _, si := range set.DataIds {
+		dataSectors0 = append(dataSectors0, indexedSector{m.db.Sectors[si], si})
+	}
+	for _, si := range set.ParityIds {
+		paritySectors0 = append(paritySectors0, indexedSector{m.db.Sectors[si], si})
+	}
+	m.mu.Unlock()
 	used := make(map[string]struct{})
-	for _, sector := range all {
-		if len(sector.Contract) != 0 {
-			used[sector.Contract] = struct{}{}
+	for _, is := range dataSectors0 {
+		if len(is.sector.Contract) != 0 {
+			used[bytes2hex(is.sector.Contract)] = struct{}{}
 		}
 	}
-	n := len(all) - len(used)
-	var dataSectors, paritySectors []*Sector
-	for _, sector := range all {
-		if len(sector.Contract) != 0 {
+	for _, is := range paritySectors0 {
+		if len(is.sector.Contract) != 0 {
+			used[bytes2hex(is.sector.Contract)] = struct{}{}
+		}
+	}
+	n := len(dataSectors0) + len(paritySectors0) - len(used)
+	var dataSectors, paritySectors []indexedSector
+	for _, is := range dataSectors0 {
+		if len(bytes2hex(is.sector.Contract)) != 0 {
 			continue
 		}
-		if len(sector.Data) != m.sectorSize {
-			return fmt.Errorf("uploadSector: len(sector.Data) is %d, want %d; sector %d", len(sector.Data), m.sectorSize, sector.id)
+		if len(is.sector.Data) != m.sectorSize {
+			return fmt.Errorf("uploadSet: len(sector.Data) is %d, want %d; sector %d", len(is.sector.Data), m.sectorSize, is.id)
 		}
-		if sector.isData {
-			dataSectors = append(dataSectors, sector)
-		} else {
-			paritySectors = append(paritySectors, sector)
+		dataSectors = append(dataSectors, is)
+	}
+	for _, is := range paritySectors0 {
+		if len(bytes2hex(is.sector.Contract)) != 0 {
+			continue
 		}
+		if len(is.sector.Data) != m.sectorSize {
+			return fmt.Errorf("uploadSet: len(sector.Data) is %d, want %d; sector %d", len(is.sector.Data), m.sectorSize, is.id)
+		}
+		paritySectors = append(paritySectors, is)
 	}
 	contracts, err := m.siaclient.Contracts()
 	if err != nil {
@@ -599,11 +575,11 @@ func (m *Manager) uploadSet(set *Set) error {
 	m.readsHistoryMu.Lock()
 	sort.Slice(contracts1, func(i, j int) bool {
 		var iavg, javg int64
-		il, has := m.readsHistory[contracts1[i]]
+		il, has := m.db.ReadsHistory[contracts1[i]]
 		if has {
 			iavg = il.TotalMs / il.Count
 		}
-		jl, has := m.readsHistory[contracts1[j]]
+		jl, has := m.db.ReadsHistory[contracts1[j]]
 		if has {
 			javg = jl.TotalMs / jl.Count
 		}
@@ -615,27 +591,27 @@ func (m *Manager) uploadSet(set *Set) error {
 	// Upload data sectors to fastest contracts.
 	for j, i := range rand.Perm(len(dataSectors)) {
 		contract := contracts1[i]
-		sector := dataSectors[j]
+		is := dataSectors[j]
 		wg.Add(1)
-		go func(sector *Sector, contract string) {
+		go func(is indexedSector, contract string) {
 			defer wg.Done()
-			if err := m.uploadSector(sector, contract); err != nil {
+			if err := m.uploadSector(is.sector, is.id, contract); err != nil {
 				errors <- fmt.Errorf("data sector: %v", err)
 			}
-		}(sector, contract)
+		}(is, contract)
 	}
 	// Upload parity sectors to random subset of other contracts.
 	contracts1 = contracts1[len(dataSectors):]
 	for j, i := range rand.Perm(len(contracts1))[:len(paritySectors)] {
 		contract := contracts1[i]
-		sector := paritySectors[j]
+		is := paritySectors[j]
 		wg.Add(1)
-		go func(sector *Sector, contract string) {
+		go func(is indexedSector, contract string) {
 			defer wg.Done()
-			if err := m.uploadSector(sector, contract); err != nil {
+			if err := m.uploadSector(is.sector, is.id, contract); err != nil {
 				errors <- fmt.Errorf("parity sector: %v", err)
 			}
-		}(sector, contract)
+		}(is, contract)
 	}
 	wg.Wait()
 	close(errors)
@@ -650,19 +626,21 @@ func (m *Manager) uploadSet(set *Set) error {
 	return nil
 }
 
-func (m *Manager) addParity(set *Set) {
+func (m *Manager) addParity(setIndex int) {
 	// Run under m.mu.Lock().
 	if m.nparity == 0 {
 		return
 	}
+	set := m.db.Sets[setIndex]
 	var datas [][]byte
-	if len(set.DataSectors) == 0 {
-		panic("len(set.DataSectors) == 0")
+	if len(set.DataIds) == 0 {
+		panic("len(set.DataIds) == 0")
 	}
-	ndata := len(set.DataSectors)
-	for _, sector := range set.DataSectors {
+	ndata := len(set.DataIds)
+	for _, si := range set.DataIds {
+		sector := m.db.Sectors[si]
 		if len(sector.Data) != m.sectorSize {
-			panic(fmt.Sprintf("sector %d: len(sector.Data) is %d, want %d", sector.id, len(sector.Data), m.sectorSize))
+			panic(fmt.Sprintf("sector %d: len(sector.Data) is %d, want %d", si, len(sector.Data), m.sectorSize))
 		}
 		datas = append(datas, sector.Data)
 	}
@@ -679,24 +657,23 @@ func (m *Manager) addParity(set *Set) {
 	for j := 0; j < m.nparity; j++ {
 		i := m.next
 		m.next++
-		sector := &Sector{
+		sector := &managerdb.Sector{
 			Data: datas[ndata+j],
-			id:   i,
-			set:  set,
 		}
+		m.sector2set[i] = setIndex
 		if len(sector.Data) != m.sectorSize {
 			panic(fmt.Sprintf("len(sector.Data) is %d, want %d", len(sector.Data), m.sectorSize))
 		}
-		m.sectors[i] = sector
-		set.ParitySectors = append(set.ParitySectors, sector)
+		m.db.Sectors[i] = sector
+		set.ParityIds = append(set.ParityIds, i)
 	}
 }
 
-func (m *Manager) uploadSector(sector *Sector, contract string) error {
+func (m *Manager) uploadSector(sector *managerdb.Sector, id int64, contract string) error {
 	if len(sector.Data) != m.sectorSize {
-		return fmt.Errorf("uploadSector: len(sector.Data) is %d, want %d; sector %d", len(sector.Data), m.sectorSize, sector.id)
+		return fmt.Errorf("uploadSector: len(sector.Data) is %d, want %d; sector %d", len(sector.Data), m.sectorSize, id)
 	}
-	sectorRoot, err := m.siaclient.Write(contract, sector.Data, sector.id)
+	sectorRoot, err := m.siaclient.Write(contract, sector.Data, id)
 	if err != nil {
 		m.lastFailureMu.Lock()
 		m.lastFailure[contract] = time.Now()
@@ -704,8 +681,8 @@ func (m *Manager) uploadSector(sector *Sector, contract string) error {
 		return fmt.Errorf("siaclient.Write(%q): %v.", contract, err)
 	}
 	m.mu.Lock()
-	sector.Contract = contract
-	sector.MerkleRoot = sectorRoot
+	sector.Contract = hex2bytes(contract)
+	sector.MerkleRoot = hex2bytes(sectorRoot)
 	sector.Data = nil
 	m.mu.Unlock()
 	return nil
