@@ -506,6 +506,7 @@ func (m *Manager) handlePending() {
 }
 
 func (m *Manager) formParitySet() *Set {
+	// Run under m.mu.Lock().
 	ndata := m.ndata
 	if ndata > len(m.pending) {
 		ndata = len(m.pending)
