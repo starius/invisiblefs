@@ -350,7 +350,7 @@ func (m *Manager) WriteSector(i int64, data []byte) error {
 }
 
 func (m *Manager) Start() error {
-	go m.continueUploads()
+	go m.continueUploads(len(m.db.Sets))
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -447,12 +447,12 @@ func (m *Manager) WaitForUploading() {
 	}
 }
 
-func (m *Manager) continueUploads() {
+func (m *Manager) continueUploads(oldSets int) {
 	sets := make(map[int]struct{})
 	m.mu.Lock()
 	for si, sector := range m.db.Sectors {
 		setIndex, has := m.sector2set[si]
-		if has && len(sector.Contract) == 0 {
+		if has && len(sector.Contract) == 0 && setIndex < oldSets {
 			sets[setIndex] = struct{}{}
 		}
 	}
