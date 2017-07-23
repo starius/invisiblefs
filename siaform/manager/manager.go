@@ -53,6 +53,12 @@ type Manager struct {
 	setChan  chan int
 	stopChan chan struct{}
 	finChan  chan struct{}
+
+	uploadingSectors   map[int64]struct{}
+	uploadingSectorsMu sync.Mutex
+
+	uploadingSets   map[int]struct{}
+	uploadingSetsMu sync.Mutex
 }
 
 func New(ndata, nparity, sectorSize int, sc SiaClient) (*Manager, error) {
@@ -64,18 +70,20 @@ func New(ndata, nparity, sectorSize int, sc SiaClient) (*Manager, error) {
 		ReadsHistory: make(map[string]*managerdb.Latency),
 	}
 	return &Manager{
-		db:          db,
-		next:        1,
-		ndata:       ndata,
-		nparity:     nparity,
-		sectorSize:  sectorSize,
-		siaclient:   sc,
-		sector2set:  make(map[int64]int),
-		lastFailure: make(map[string]time.Time),
-		dataChan:    make(chan struct{}, 100),
-		setChan:     make(chan int, 100),
-		stopChan:    make(chan struct{}),
-		finChan:     make(chan struct{}),
+		db:               db,
+		next:             1,
+		ndata:            ndata,
+		nparity:          nparity,
+		sectorSize:       sectorSize,
+		siaclient:        sc,
+		sector2set:       make(map[int64]int),
+		lastFailure:      make(map[string]time.Time),
+		dataChan:         make(chan struct{}, 100),
+		setChan:          make(chan int, 100),
+		stopChan:         make(chan struct{}),
+		finChan:          make(chan struct{}),
+		uploadingSectors: make(map[int64]struct{}),
+		uploadingSets:    make(map[int]struct{}),
 	}, nil
 }
 
@@ -89,17 +97,19 @@ func Load(zdump []byte, sc SiaClient) (*Manager, error) {
 		return nil, fmt.Errorf("proto.Unmarshal(dump, db): %v", err)
 	}
 	m := &Manager{
-		db:          db,
-		siaclient:   sc,
-		lastFailure: make(map[string]time.Time),
-		sector2set:  make(map[int64]int),
-		dataChan:    make(chan struct{}, 100),
-		setChan:     make(chan int, 100),
-		stopChan:    make(chan struct{}),
-		finChan:     make(chan struct{}),
-		ndata:       int(db.Ndata),
-		nparity:     int(db.Nparity),
-		sectorSize:  int(db.SectorSize),
+		db:               db,
+		siaclient:        sc,
+		lastFailure:      make(map[string]time.Time),
+		sector2set:       make(map[int64]int),
+		dataChan:         make(chan struct{}, 100),
+		setChan:          make(chan int, 100),
+		stopChan:         make(chan struct{}),
+		finChan:          make(chan struct{}),
+		ndata:            int(db.Ndata),
+		nparity:          int(db.Nparity),
+		sectorSize:       int(db.SectorSize),
+		uploadingSectors: make(map[int64]struct{}),
+		uploadingSets:    make(map[int]struct{}),
 	}
 	if m.db.Sectors == nil {
 		m.db.Sectors = make(map[int64]*managerdb.Sector)
@@ -512,6 +522,18 @@ type indexedSector struct {
 }
 
 func (m *Manager) uploadSet(setIndex int) error {
+	m.uploadingSetsMu.Lock()
+	if _, has := m.uploadingSets[setIndex]; has {
+		panic(fmt.Sprintf("parallel uploadSet(%d)", setIndex))
+	}
+	m.uploadingSets[setIndex] = struct{}{}
+	m.uploadingSetsMu.Unlock()
+	defer func() {
+		m.uploadingSetsMu.Lock()
+		delete(m.uploadingSets, setIndex)
+		m.uploadingSetsMu.Unlock()
+	}()
+	//
 	var dataSectors0, paritySectors0 []indexedSector
 	m.mu.Lock()
 	set := m.db.Sets[setIndex]
@@ -670,6 +692,18 @@ func (m *Manager) addParity(setIndex int) {
 }
 
 func (m *Manager) uploadSector(sector *managerdb.Sector, id int64, contract string) error {
+	m.uploadingSectorsMu.Lock()
+	if _, has := m.uploadingSectors[id]; has {
+		panic(fmt.Sprintf("parallel uploadSector(%d)", id))
+	}
+	m.uploadingSectors[id] = struct{}{}
+	m.uploadingSectorsMu.Unlock()
+	defer func() {
+		m.uploadingSectorsMu.Lock()
+		delete(m.uploadingSectors, id)
+		m.uploadingSectorsMu.Unlock()
+	}()
+	//
 	if len(sector.Data) != m.sectorSize {
 		return fmt.Errorf("uploadSector: len(sector.Data) is %d, want %d; sector %d", len(sector.Data), m.sectorSize, id)
 	}
