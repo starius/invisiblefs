@@ -68,6 +68,7 @@ type Manager struct {
 	dataChan chan struct{}
 	setChan  chan *Set
 	stopChan chan struct{}
+	finChan  chan struct{}
 }
 
 func New(ndata, nparity, sectorSize int, sc SiaClient) (*Manager, error) {
@@ -83,6 +84,7 @@ func New(ndata, nparity, sectorSize int, sc SiaClient) (*Manager, error) {
 		dataChan:     make(chan struct{}, 100),
 		setChan:      make(chan *Set, 100),
 		stopChan:     make(chan struct{}),
+		finChan:      make(chan struct{}),
 	}, nil
 }
 
@@ -103,6 +105,7 @@ func Load(zdump []byte, sc SiaClient) (*Manager, error) {
 		dataChan:     make(chan struct{}, 100),
 		setChan:      make(chan *Set, 100),
 		stopChan:     make(chan struct{}),
+		finChan:      make(chan struct{}),
 		ndata:        int(db.Ndata),
 		nparity:      int(db.Nparity),
 		sectorSize:   int(db.SectorSize),
@@ -416,16 +419,23 @@ func (m *Manager) Start() error {
 	go func() {
 		wg.Wait()
 		// Ingest all data from channels to unblock goroutines.
-		for _ = range m.dataChan {
+		finished := false
+		for !finished {
+			select {
+			case <-m.dataChan:
+			case <-m.setChan:
+			default:
+				finished = true
+			}
 		}
-		for _ = range m.setChan {
-		}
+		close(m.finChan)
 	}()
 	return nil
 }
 
 func (m *Manager) Stop() error {
 	close(m.stopChan)
+	<-m.finChan
 	return nil
 }
 
