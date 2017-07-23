@@ -40,6 +40,14 @@ var (
 	ks *kvsia.KvSia
 )
 
+func writeFile(fname string, data []byte) error {
+	tmpname := fname + ".new"
+	if err := ioutil.WriteFile(tmpname, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpname, fname)
+}
+
 func main() {
 	flag.Parse()
 	mnFile := filepath.Join(*dataDir, "manager.db")
@@ -109,15 +117,15 @@ func main() {
 		if err != nil {
 			log.Fatalf("mn.DumpDb: %v.", err)
 		}
-		if err := ioutil.WriteFile(mnFile, data, 0600); err != nil {
-			log.Fatalf("ioutil.WriteFile(%q, ...): %v.", mnFile, err)
+		if err := writeFile(mnFile, data); err != nil {
+			log.Fatalf("writeFile(%q, ...): %v.", mnFile, err)
 		}
 		data, err = fi.DumpDb()
 		if err != nil {
 			log.Fatalf("fi.DumpDb: %v.", err)
 		}
-		if err := ioutil.WriteFile(fiFile, data, 0600); err != nil {
-			log.Fatalf("ioutil.WriteFile(%q, ...): %v.", fiFile, err)
+		if err := writeFile(fiFile, data); err != nil {
+			log.Fatalf("writeFile(%q, ...): %v.", fiFile, err)
 		}
 	}
 	go func() {
