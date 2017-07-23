@@ -54,7 +54,9 @@ func main() {
 	fiFile := filepath.Join(*dataDir, "files.db")
 	var err error
 	var sc manager.SiaClient
-	sc, err = siaclient.New(*siaAddr, &http.Client{})
+	sc, err = siaclient.New(*siaAddr, &http.Client{
+		Timeout: 30 * time.Second,
+	})
 	if err != nil {
 		log.Fatalf("siaclient.New: %v.", err)
 	}
