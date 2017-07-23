@@ -639,6 +639,9 @@ func (m *Manager) uploadSet(set *Set) error {
 
 func (m *Manager) addParity(set *Set) {
 	// Run under m.mu.Lock().
+	if m.nparity == 0 {
+		return
+	}
 	var datas [][]byte
 	if len(set.DataSectors) == 0 {
 		panic("len(set.DataSectors) == 0")
