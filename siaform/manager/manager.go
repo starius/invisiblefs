@@ -558,6 +558,9 @@ func (m *Manager) uploadSet(set *Set) error {
 		if len(sector.Contract) != 0 {
 			continue
 		}
+		if len(sector.Data) != m.sectorSize {
+			return fmt.Errorf("uploadSector: len(sector.Data) is %d, want %d; sector %d", len(sector.Data), m.sectorSize, sector.id)
+		}
 		if sector.isData {
 			dataSectors = append(dataSectors, sector)
 		} else {
@@ -581,7 +584,7 @@ func (m *Manager) uploadSet(set *Set) error {
 	}
 	m.lastFailureMu.Unlock()
 	if len(contracts1) < n {
-		return fmt.Errorf("too few contracts")
+		return fmt.Errorf("too few contracts (%d < %d)", len(contracts1), n)
 	}
 	m.readsHistoryMu.Lock()
 	sort.Slice(contracts1, func(i, j int) bool {
@@ -607,7 +610,7 @@ func (m *Manager) uploadSet(set *Set) error {
 		go func(sector *Sector, contract string) {
 			defer wg.Done()
 			if err := m.uploadSector(sector, contract); err != nil {
-				errors <- err
+				errors <- fmt.Errorf("data sector: %v", err)
 			}
 		}(sector, contract)
 	}
@@ -620,7 +623,7 @@ func (m *Manager) uploadSet(set *Set) error {
 		go func(sector *Sector, contract string) {
 			defer wg.Done()
 			if err := m.uploadSector(sector, contract); err != nil {
-				errors <- err
+				errors <- fmt.Errorf("parity sector: %v", err)
 			}
 		}(sector, contract)
 	}
@@ -649,7 +652,7 @@ func (m *Manager) addParity(set *Set) {
 	ndata := len(set.DataSectors)
 	for _, sector := range set.DataSectors {
 		if len(sector.Data) != m.sectorSize {
-			panic("len(sector.Data) != m.sectorSize")
+			panic(fmt.Sprintf("sector %d: len(sector.Data) is %d, want %d", sector.id, len(sector.Data), m.sectorSize))
 		}
 		datas = append(datas, sector.Data)
 	}
@@ -671,12 +674,18 @@ func (m *Manager) addParity(set *Set) {
 			id:   i,
 			set:  set,
 		}
+		if len(sector.Data) != m.sectorSize {
+			panic(fmt.Sprintf("len(sector.Data) is %d, want %d", len(sector.Data), m.sectorSize))
+		}
 		m.sectors[i] = sector
 		set.ParitySectors = append(set.ParitySectors, sector)
 	}
 }
 
 func (m *Manager) uploadSector(sector *Sector, contract string) error {
+	if len(sector.Data) != m.sectorSize {
+		return fmt.Errorf("uploadSector: len(sector.Data) is %d, want %d; sector %d", len(sector.Data), m.sectorSize, sector.id)
+	}
 	sectorRoot, err := m.siaclient.Write(contract, sector.Data, sector.id)
 	if err != nil {
 		m.lastFailureMu.Lock()
