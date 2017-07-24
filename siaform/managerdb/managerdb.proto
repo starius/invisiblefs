@@ -2,13 +2,15 @@ syntax = "proto3";
 
 package managerdb;
 
+import "google/protobuf/timestamp.proto";
+
 message Db {
   map<sint64, Sector> sectors = 1;
   repeated Set sets = 2;
   sint32 ndata = 3;
   sint32 nparity = 4;
   sint32 sector_size = 5;
-  map<string, Latency> reads_history = 6;
+  map<string, ContractHistory> contracts_history = 6;
   repeated sint64 pending = 7;
 }
 
@@ -26,7 +28,11 @@ message Set {
   repeated sint64 parity_ids = 2;
 }
 
-message Latency {
-  sint64 total_ms = 1;
-  sint64 count = 2;
+message ContractHistory {
+  sint64 reads_total_ms = 1;
+  sint64 reads_number = 2;
+  sint64 reads_failures = 3;
+  sint64 writes_number = 4;
+  sint64 writes_failures = 5;
+  google.protobuf.Timestamp last_failure = 6;
 }

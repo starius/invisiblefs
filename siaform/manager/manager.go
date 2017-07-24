@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/ptypes"
 	"github.com/klauspost/reedsolomon"
 	"github.com/starius/invisiblefs/gzip"
 	"github.com/starius/invisiblefs/siaform/managerdb"
@@ -42,10 +43,7 @@ type Manager struct {
 
 	siaclient SiaClient
 
-	readsHistoryMu sync.Mutex
-
-	lastFailure   map[string]time.Time
-	lastFailureMu sync.Mutex
+	contractsHistoryMu sync.Mutex
 
 	ndata, nparity, sectorSize int
 
@@ -63,11 +61,11 @@ type Manager struct {
 
 func New(ndata, nparity, sectorSize int, sc SiaClient) (*Manager, error) {
 	db := &managerdb.Db{
-		Sectors:      make(map[int64]*managerdb.Sector),
-		Ndata:        int32(ndata),
-		Nparity:      int32(nparity),
-		SectorSize:   int32(sectorSize),
-		ReadsHistory: make(map[string]*managerdb.Latency),
+		Sectors:          make(map[int64]*managerdb.Sector),
+		Ndata:            int32(ndata),
+		Nparity:          int32(nparity),
+		SectorSize:       int32(sectorSize),
+		ContractsHistory: make(map[string]*managerdb.ContractHistory),
 	}
 	return &Manager{
 		db:               db,
@@ -77,7 +75,6 @@ func New(ndata, nparity, sectorSize int, sc SiaClient) (*Manager, error) {
 		sectorSize:       sectorSize,
 		siaclient:        sc,
 		sector2set:       make(map[int64]int),
-		lastFailure:      make(map[string]time.Time),
 		dataChan:         make(chan struct{}, 100),
 		setChan:          make(chan int, 100),
 		stopChan:         make(chan struct{}),
@@ -99,7 +96,6 @@ func Load(zdump []byte, sc SiaClient) (*Manager, error) {
 	m := &Manager{
 		db:               db,
 		siaclient:        sc,
-		lastFailure:      make(map[string]time.Time),
 		sector2set:       make(map[int64]int),
 		dataChan:         make(chan struct{}, 100),
 		setChan:          make(chan int, 100),
@@ -114,8 +110,8 @@ func Load(zdump []byte, sc SiaClient) (*Manager, error) {
 	if m.db.Sectors == nil {
 		m.db.Sectors = make(map[int64]*managerdb.Sector)
 	}
-	if m.db.ReadsHistory == nil {
-		m.db.ReadsHistory = make(map[string]*managerdb.Latency)
+	if m.db.ContractsHistory == nil {
+		m.db.ContractsHistory = make(map[string]*managerdb.ContractHistory)
 	}
 	maxI := int64(0)
 	for i := range m.db.Sectors {
@@ -165,15 +161,15 @@ func (m *Manager) load(i int64, contract, sectorRoot string) ([]byte, error) {
 	t1 := time.Now()
 	data, err := m.siaclient.Read(contract, sectorRoot, i)
 	latency := time.Since(t1)
-	m.readsHistoryMu.Lock()
-	l, has := m.db.ReadsHistory[contract]
+	m.contractsHistoryMu.Lock()
+	h, has := m.db.ContractsHistory[contract]
 	if !has {
-		l = &managerdb.Latency{}
-		m.db.ReadsHistory[contract] = l
+		h = &managerdb.ContractHistory{}
+		m.db.ContractsHistory[contract] = h
 	}
-	l.TotalMs += latency.Nanoseconds() / 1e6
-	l.Count++
-	m.readsHistoryMu.Unlock()
+	h.ReadsTotalMs += latency.Nanoseconds() / 1e6
+	h.ReadsNumber++
+	m.contractsHistoryMu.Unlock()
 	if len(data) != m.sectorSize {
 		return nil, fmt.Errorf("Bad data length: %d. Want %d", len(data), m.sectorSize)
 	}
@@ -580,34 +576,39 @@ func (m *Manager) uploadSet(setIndex int) error {
 		return fmt.Errorf("siaclient.Contracts: %v.", err)
 	}
 	var contracts1 []string
-	m.lastFailureMu.Lock()
+	m.contractsHistoryMu.Lock()
 	for _, contract := range contracts {
 		if _, has := used[contract]; has {
 			continue
 		}
-		if a, has := m.lastFailure[contract]; has && time.Since(a) < time.Minute {
-			continue
+		if a, has := m.db.ContractsHistory[contract]; has {
+			at, err := ptypes.Timestamp(a.LastFailure)
+			if err != nil {
+				panic(err)
+			}
+			if time.Since(at) < time.Minute {
+				continue
+			}
 		}
 		contracts1 = append(contracts1, contract)
 	}
-	m.lastFailureMu.Unlock()
 	if len(contracts1) < n {
+		m.contractsHistoryMu.Unlock()
 		return fmt.Errorf("too few contracts (%d < %d)", len(contracts1), n)
 	}
-	m.readsHistoryMu.Lock()
 	sort.Slice(contracts1, func(i, j int) bool {
 		var iavg, javg int64
-		il, has := m.db.ReadsHistory[contracts1[i]]
+		il, has := m.db.ContractsHistory[contracts1[i]]
 		if has {
-			iavg = il.TotalMs / il.Count
+			iavg = il.ReadsTotalMs / il.ReadsNumber
 		}
-		jl, has := m.db.ReadsHistory[contracts1[j]]
+		jl, has := m.db.ContractsHistory[contracts1[j]]
 		if has {
-			javg = jl.TotalMs / jl.Count
+			javg = jl.ReadsTotalMs / jl.ReadsNumber
 		}
 		return iavg < javg
 	})
-	m.readsHistoryMu.Unlock()
+	m.contractsHistoryMu.Unlock()
 	var wg sync.WaitGroup
 	errors := make(chan error, len(dataSectors)+len(paritySectors))
 	// Upload data sectors to fastest contracts.
@@ -709,9 +710,17 @@ func (m *Manager) uploadSector(sector *managerdb.Sector, id int64, contract stri
 	}
 	sectorRoot, err := m.siaclient.Write(contract, sector.Data, id)
 	if err != nil {
-		m.lastFailureMu.Lock()
-		m.lastFailure[contract] = time.Now()
-		m.lastFailureMu.Unlock()
+		m.contractsHistoryMu.Lock()
+		h, has := m.db.ContractsHistory[contract]
+		if !has {
+			h = &managerdb.ContractHistory{}
+			m.db.ContractsHistory[contract] = h
+		}
+		h.LastFailure, err = ptypes.TimestampProto(time.Now())
+		if err != nil {
+			panic(err)
+		}
+		m.contractsHistoryMu.Unlock()
 		return fmt.Errorf("siaclient.Write(%q): %v.", contract, err)
 	}
 	m.mu.Lock()
