@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package freestore;
+
+message Peer {
+  bytes pubkey = 1;
+  string address = 2;
+}
+
+message KnownPeersRequest {
+}
+
+message KnownPeersResponse {
+  repeated Peer peers = 1;
+}
+
+message MakeContractRequest {
+  int32 sector_size = 1;
+  bytes client_pubkey = 2;
+  int32 days_num = 3;
+}
+
+message MakeContractResponse {
+  bytes id = 1;
+}
+
+message ExtendContractRequest {
+  bytes id = 1;
+  int32 days_num = 2;
+}
+
+message ExtendContractResponse {
+}
+
+message ContractMetadataRequest {
+  bytes id = 1;
+}
+
+message ContractMetadataResponse {
+  repeated bytes sector_ids = 1;
+  int32 days_left = 2;
+  int32 sector_size = 3;
+  bytes signature = 4;
+}
+
+message ReadSectorRequest {
+  bytes id = 1;
+  int64 sector = 2;
+  int32 offset = 3;
+  int32 size = 4;
+  bool proof_needed = 5;
+}
+
+message ReadSectorResponse {
+  bytes data = 1;
+  bytes proof = 2;
+}
+
+message WriteSectorRequest {
+  bytes id = 1;
+  int64 sector = 2;
+  int32 offset = 3;
+  int32 length = 4;
+  bytes data = 5;
+  bytes signature = 6;
+}
+
+message WriteSectorResponse {
+}
+
+message ShrinkRequest {
+  bytes id = 1;
+  int64 num_sectors = 2;
+  bytes signature = 3;
+}
+
+message ShrinkResponse {
+}
+
+message ReorderRequest {
+  bytes id = 1;
+  repeated int64 ordering = 2;
+  bytes signature = 3;
+}
+
+message ReorderResponse {
+}
+
+service Freestore {
+
+  rpc KnownPeers(KnownPeersRequest) returns (KnownPeersResponse);
+  rpc MakeContract(MakeContractRequest) returns (MakeContractResponse);
+  rpc ExtendContract(ExtendContractRequest) returns (ExtendContractResponse);
+  rpc ContractMetadata(ContractMetadataRequest) returns (ContractMetadataResponse);
+  rpc ReadSector(ReadSectorRequest) returns (ReadSectorResponse);
+  rpc Shrink(ShrinkRequest) returns (ShrinkResponse);
+  rpc Reorder(ReorderRequest) returns (ReorderResponse);
+
+}
