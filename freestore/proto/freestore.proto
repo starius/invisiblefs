@@ -8,6 +8,7 @@ message Peer {
 }
 
 message KnownPeersRequest {
+  repeated Peer peers = 1;
 }
 
 message KnownPeersResponse {
