@@ -29,6 +29,7 @@ type AppenderSet interface {
 type Sparse struct {
 	index         *C.Index
 	data, offsets Appender
+	diskStart     int64
 }
 
 type byteReader struct {
@@ -168,27 +169,36 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 			p = p[:len(p)-1]
 		}
 	}
-	diskStart, err := s.data.Size()
-	if err != nil {
-		return 0, err
+	if s.diskStart == 0 {
+		var err error
+		s.diskStart, err = s.data.Size()
+		if err != nil {
+			s.diskStart = 0
+			return 0, err
+		}
 	}
 	// Write to s.data.
 	if n, err := s.data.Append(p); err != nil {
+		s.diskStart = 0
 		return n, err
 	} else if n != len(p) {
+		s.diskStart = 0
 		return n, io.ErrShortWrite
 	}
 	// Write to s.offsets.
-	items := []uint64{uint64(off), uint64(diskStart), uint64(len(p))}
+	items := []uint64{uint64(off), uint64(s.diskStart), uint64(len(p))}
 	buf := make([]byte, binary.MaxVarintLen64)
 	for _, item := range items {
 		l := binary.PutUvarint(buf, item)
 		if n, err := s.offsets.Append(buf[:l]); err != nil {
+			s.diskStart = 0
 			return len(p), err
 		} else if n != l {
+			s.diskStart = 0
 			return len(p), io.ErrShortWrite
 		}
 	}
-	C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(len(p)))
+	C.sparse_write(s.index, C.int64_t(off), C.int64_t(s.diskStart), C.int64_t(len(p)))
+	s.diskStart += int64(len(p))
 	return pn, nil
 }
