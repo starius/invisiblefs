@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	pb "google.golang.org/grpc/examples/helloworld/helloworld"
 )
 
 type dummyListener struct {
@@ -33,6 +35,12 @@ func (l *dummyListener) Addr() net.Addr {
 	}
 }
 
+type helloServer struct{}
+
+func (s *helloServer) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
+	return &pb.HelloReply{Message: "Hello " + in.Name}, nil
+}
+
 func TestPubkey(t *testing.T) {
 	priv, err := GeneratePriv()
 	if err != nil {
@@ -53,6 +61,7 @@ func TestPubkey(t *testing.T) {
 	c := make(chan net.Conn)
 	listener := &dummyListener{c: c}
 	grpcServer := grpc.NewServer(grpc.Creds(serverCreds))
+	pb.RegisterGreeterServer(grpcServer, &helloServer{})
 	var wg sync.WaitGroup
 	var serverErr error
 	wg.Add(1)
@@ -73,6 +82,16 @@ func TestPubkey(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	grpcClient := pb.NewGreeterClient(cCliConn)
+	res, err := grpcClient.SayHello(context.Background(), &pb.HelloRequest{
+		Name: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Message != "Hello test" {
+		t.Errorf("res.Message = %q", res.Message)
 	}
 	if err := cCliConn.Close(); err != nil {
 		t.Fatal(err)
