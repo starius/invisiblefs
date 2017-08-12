@@ -74,7 +74,10 @@ func TestPubkey(t *testing.T) {
 	dialer := func(string, time.Duration) (net.Conn, error) {
 		return cConn, nil
 	}
-	cCliConn, err := grpc.Dial(
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cCliConn, err := grpc.DialContext(
+		ctx,
 		"server",
 		grpc.WithBlock(),
 		grpc.WithDialer(dialer),
