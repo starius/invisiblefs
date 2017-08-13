@@ -1,12 +1,16 @@
 package pubkey
 
 import (
+	"bytes"
+	"crypto/rand"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/blake2b"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	pb "google.golang.org/grpc/examples/helloworld/helloworld"
@@ -42,11 +46,11 @@ func (s *helloServer) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.He
 }
 
 func TestPubkey(t *testing.T) {
-	priv, err := GeneratePriv()
+	priv, err := GeneratePriv(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cert, err := Cert(priv)
+	cert, err := Cert(priv, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,5 +108,40 @@ func TestPubkey(t *testing.T) {
 	wg.Wait()
 	if serverErr != nil {
 		t.Fatal(serverErr)
+	}
+}
+
+func hkdfReader(secret string) io.Reader {
+	xof, err := blake2b.NewXOF(blake2b.OutputLengthUnknown, []byte(secret))
+	if err != nil {
+		panic(err)
+	}
+	return xof
+}
+
+func TestPubkeyReproducibleRandom(t *testing.T) {
+	r1 := hkdfReader("top secret")
+	priv1, err := GeneratePriv(r1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert1, err := Cert(priv1, r1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2 := hkdfReader("top secret")
+	priv2, err := GeneratePriv(r2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert2, err := Cert(priv2, r2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(priv1, priv2) {
+		t.Fatal("private keys generated from the same random inputs are different")
+	}
+	if !bytes.Equal(cert1, cert2) {
+		t.Fatal("certs generated from the same PRNG are different")
 	}
 }
