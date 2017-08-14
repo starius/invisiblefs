@@ -102,3 +102,39 @@ func TestAppend(t *testing.T) {
 		t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
 	}
 }
+
+func TestReopen(t *testing.T) {
+	data := &DummyAppender{}
+	offsets := &DummyAppender{}
+	s, err := NewSparse(data, offsets)
+	if err != nil {
+		t.Fatalf("NewSparse: %v", err)
+	}
+	// Write concentric slices.
+	for i := 0; i < 5; i++ {
+		buf := make([]byte, 10-2*i)
+		for j := 0; j < len(buf); j++ {
+			buf[j] = byte(i)
+		}
+		if n, err := s.WriteAt(buf, int64(i)); err != nil {
+			t.Errorf("WriteAt: %v", err)
+		} else if n != len(buf) {
+			t.Errorf("WriteAt: n = %d", n)
+		}
+	}
+	// Reopen.
+	s1, err := NewSparse(data, offsets)
+	if err != nil {
+		t.Fatalf("NewSparse: %v", err)
+	}
+	buf := make([]byte, 10)
+	if n, err := s1.ReadAt(buf, 0); err != nil {
+		t.Errorf("ReadAt: %v", err)
+	} else if n != 10 {
+		t.Errorf("ReadAt: n = %d", n)
+	}
+	bufexp := []byte{0, 1, 2, 3, 4, 4, 3, 2, 1, 0}
+	if !bytes.Equal(buf, bufexp) {
+		t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
+	}
+}
