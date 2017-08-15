@@ -138,3 +138,22 @@ func TestReopen(t *testing.T) {
 		t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
 	}
 }
+
+func TestReadZeros(t *testing.T) {
+	data := &DummyAppender{}
+	offsets := &DummyAppender{}
+	s, err := NewSparse(data, offsets)
+	if err != nil {
+		t.Fatalf("NewSparse: %v", err)
+	}
+	buf := []byte{1,2,3,4,5}
+	if n, err := s.ReadAt(buf, 0); err != nil {
+		t.Errorf("ReadAt: %v", err)
+	} else if n != len(buf) {
+		t.Errorf("ReadAt: n = %d", n)
+	}
+	bufexp := []byte{0,0,0,0,0}
+	if !bytes.Equal(buf, bufexp) {
+		t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
+	}
+}
