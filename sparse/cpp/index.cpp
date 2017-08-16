@@ -69,13 +69,13 @@ void sparse_write(Index* index, int64_t start, int64_t disk_start, int64_t slice
     std::vector<Map::iterator> iterators;
     if (it != index->data.end()) {
         iterators.push_back(it);
-        while (it != index->data.begin()) {
-            it--;
-            if (it->first >= start + slice_length) {
-                break;
-            }
-            iterators.push_back(it);
+    }
+    while (it != index->data.begin()) {
+        it--;
+        if (it->first >= start + slice_length) {
+            break;
         }
+        iterators.push_back(it);
     }
     int64_t slice_begin = start;
     int64_t slice_end = start + slice_length;

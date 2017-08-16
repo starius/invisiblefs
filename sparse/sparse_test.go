@@ -157,3 +157,96 @@ func TestReadZeros(t *testing.T) {
 		t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
 	}
 }
+
+func TestWrites(t *testing.T) {
+	type Write struct{
+		off int64
+		data []byte
+	}
+	cases := []struct{
+		writes []Write
+		readOff int64
+		expected []byte
+	}{
+		{
+			writes: []Write{
+				{
+					off: 5,
+					data: []byte{1,1,1},
+				},
+				{
+					off: 2,
+					data: []byte{2,2,2},
+				},
+			},
+			readOff: 0,
+			expected: []byte{0,0,2,2,2,1,1,1},
+		},
+		{
+			writes: []Write{
+				{
+					off: 5,
+					data: []byte{1,1,1},
+				},
+				{
+					off: 2,
+					data: []byte{2,2},
+				},
+			},
+			readOff: 0,
+			expected: []byte{0,0,2,2,0,1,1,1},
+		},
+		{
+			writes: []Write{
+				{
+					off: 5,
+					data: []byte{1,1,1},
+				},
+				{
+					off: 2,
+					data: []byte{2,2,2,2},
+				},
+			},
+			readOff: 0,
+			expected: []byte{0,0,2,2,2,2,1,1},
+		},
+	}
+	for _, c := range cases {
+		data := &DummyAppender{}
+		offsets := &DummyAppender{}
+		s, err := NewSparse(data, offsets)
+		if err != nil {
+			t.Fatalf("NewSparse: %v", err)
+		}
+		for _, write := range c.writes {
+			if n, err := s.WriteAt(write.data, write.off); err != nil {
+				t.Errorf("WriteAt: %v", err)
+			} else if n != len(write.data) {
+				t.Errorf("WriteAt: n = %d", n)
+			}
+		}
+		buf := make([]byte, len(c.expected))
+		if n, err := s.ReadAt(buf, c.readOff); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != len(c.expected) {
+			t.Errorf("ReadAt: n = %d", n)
+		}
+		if !bytes.Equal(buf, c.expected) {
+			t.Errorf("buf (%#v) != bufexp (%#v)", buf, c.expected)
+		}
+		// Reopen.
+		s1, err := NewSparse(data, offsets)
+		if err != nil {
+			t.Fatalf("NewSparse: %v", err)
+		}
+		buf2 := make([]byte, len(c.expected))
+		if n, err := s1.ReadAt(buf2, c.readOff); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != len(c.expected) {
+			t.Errorf("ReadAt: n = %d", n)
+		}
+		if !bytes.Equal(buf2, c.expected) {
+			t.Errorf("buf2 (%#v) != bufexp (%#v)", buf2, c.expected)
+		}
+	}
+}
