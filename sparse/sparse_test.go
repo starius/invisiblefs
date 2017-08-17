@@ -36,7 +36,7 @@ func TestSparse(t *testing.T) {
 	} else if n != 10 {
 		t.Errorf("ReadAt: n = %d", n)
 	}
-	buf2 := []byte{1,2,3,4,5}
+	buf2 := []byte{1, 2, 3, 4, 5}
 	if n, err := s.WriteAt(buf2, 0); err != nil {
 		t.Errorf("WriteAt: %v", err)
 	} else if n != 5 {
@@ -62,7 +62,7 @@ func TestSparse(t *testing.T) {
 	} else if n != 8 {
 		t.Errorf("ReadAt: n = %d", n)
 	}
-	buf4exp := []byte{1,2,3,1,2,3,4,5}
+	buf4exp := []byte{1, 2, 3, 1, 2, 3, 4, 5}
 	if !bytes.Equal(buf4, buf4exp) {
 		t.Errorf("buf4 (%#v) != buf4exp (%#v)", buf4, buf4exp)
 	}
@@ -80,7 +80,7 @@ func TestAppend(t *testing.T) {
 		for j := range buf {
 			buf[j] = byte(i)
 		}
-		if n, err := s.WriteAt(buf, int64(i * 10)); err != nil {
+		if n, err := s.WriteAt(buf, int64(i*10)); err != nil {
 			t.Errorf("WriteAt: %v", err)
 		} else if n != 10 {
 			t.Errorf("WriteAt: n = %d", n)
@@ -95,7 +95,7 @@ func TestAppend(t *testing.T) {
 	bufexp := make([]byte, 1000)
 	for i := 0; i < 100; i++ {
 		for j := 0; j < 10; j++ {
-			bufexp[i*10 +j] = byte(i)
+			bufexp[i*10+j] = byte(i)
 		}
 	}
 	if !bytes.Equal(buf, bufexp) {
@@ -146,69 +146,69 @@ func TestReadZeros(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSparse: %v", err)
 	}
-	buf := []byte{1,2,3,4,5}
+	buf := []byte{1, 2, 3, 4, 5}
 	if n, err := s.ReadAt(buf, 0); err != nil {
 		t.Errorf("ReadAt: %v", err)
 	} else if n != len(buf) {
 		t.Errorf("ReadAt: n = %d", n)
 	}
-	bufexp := []byte{0,0,0,0,0}
+	bufexp := []byte{0, 0, 0, 0, 0}
 	if !bytes.Equal(buf, bufexp) {
 		t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
 	}
 }
 
 func TestWrites(t *testing.T) {
-	type Write struct{
-		off int64
+	type Write struct {
+		off  int64
 		data []byte
 	}
-	cases := []struct{
-		writes []Write
-		readOff int64
+	cases := []struct {
+		writes   []Write
+		readOff  int64
 		expected []byte
 	}{
 		{
 			writes: []Write{
 				{
-					off: 5,
-					data: []byte{1,1,1},
+					off:  5,
+					data: []byte{1, 1, 1},
 				},
 				{
-					off: 2,
-					data: []byte{2,2,2},
+					off:  2,
+					data: []byte{2, 2, 2},
 				},
 			},
-			readOff: 0,
-			expected: []byte{0,0,2,2,2,1,1,1},
+			readOff:  0,
+			expected: []byte{0, 0, 2, 2, 2, 1, 1, 1},
 		},
 		{
 			writes: []Write{
 				{
-					off: 5,
-					data: []byte{1,1,1},
+					off:  5,
+					data: []byte{1, 1, 1},
 				},
 				{
-					off: 2,
-					data: []byte{2,2},
+					off:  2,
+					data: []byte{2, 2},
 				},
 			},
-			readOff: 0,
-			expected: []byte{0,0,2,2,0,1,1,1},
+			readOff:  0,
+			expected: []byte{0, 0, 2, 2, 0, 1, 1, 1},
 		},
 		{
 			writes: []Write{
 				{
-					off: 5,
-					data: []byte{1,1,1},
+					off:  5,
+					data: []byte{1, 1, 1},
 				},
 				{
-					off: 2,
-					data: []byte{2,2,2,2},
+					off:  2,
+					data: []byte{2, 2, 2, 2},
 				},
 			},
-			readOff: 0,
-			expected: []byte{0,0,2,2,2,2,1,1},
+			readOff:  0,
+			expected: []byte{0, 0, 2, 2, 2, 2, 1, 1},
 		},
 	}
 	for _, c := range cases {
