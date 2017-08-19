@@ -308,6 +308,96 @@ func TestWrites(t *testing.T) {
 			readOff:  4,
 			expected: []byte{0, 1, 1, 1, 0, 2, 2, 0},
 		},
+		{
+			writes: []Write{
+				{
+					off:  5,
+					data: []byte{1, 1, 1},
+				},
+				{
+					off:  9,
+					data: []byte{2, 2},
+				},
+				{
+					off:  7,
+					data: []byte{3, 3, 3},
+				},
+			},
+			readOff:  4,
+			expected: []byte{0, 1, 1, 3, 3, 3, 2, 0},
+		},
+		{
+			writes: []Write{
+				{
+					off:  5,
+					data: []byte{1, 1, 1},
+				},
+				{
+					off:  9,
+					data: []byte{2, 2},
+				},
+				{
+					off:  5,
+					data: []byte{3, 3, 3, 3, 3, 3},
+				},
+			},
+			readOff:  4,
+			expected: []byte{0, 3, 3, 3, 3, 3, 3, 0},
+		},
+		{
+			writes: []Write{
+				{
+					off:  5,
+					data: []byte{1, 1, 1},
+				},
+				{
+					off:  9,
+					data: []byte{2, 2},
+				},
+				{
+					off:  6,
+					data: []byte{3, 3, 3, 3, 3},
+				},
+			},
+			readOff:  4,
+			expected: []byte{0, 1, 3, 3, 3, 3, 3, 0},
+		},
+		{
+			writes: []Write{
+				{
+					off:  5,
+					data: []byte{1, 1, 1},
+				},
+				{
+					off:  9,
+					data: []byte{2, 2},
+				},
+				{
+					off:  5,
+					data: []byte{3, 3, 3, 3, 3},
+				},
+			},
+			readOff:  4,
+			expected: []byte{0, 3, 3, 3, 3, 3, 2, 0},
+		},
+		{
+			writes: []Write{
+				{
+					off:  5,
+					data: []byte{1, 1, 1},
+				},
+				{
+					off:  9,
+					data: []byte{2, 2},
+				},
+				{
+					off:  4,
+					data: []byte{3, 3, 3, 3, 3, 3, 3},
+				},
+			},
+			readOff:  3,
+			expected: []byte{0, 3, 3, 3, 3, 3, 3, 3, 0},
+		},
 	}
 	for _, c := range cases {
 		data := &DummyAppender{}
