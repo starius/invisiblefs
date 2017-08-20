@@ -137,6 +137,22 @@ func TestReopen(t *testing.T) {
 	if !bytes.Equal(buf, bufexp) {
 		t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
 	}
+	// Write more.
+	if n, err := s1.WriteAt([]byte{5, 5, 5, 5, 5}, 0); err != nil {
+		t.Errorf("WriteAt: %v", err)
+	} else if n != 5 {
+		t.Errorf("WriteAt: n = %d", n)
+	}
+	buf2 := make([]byte, 10)
+	if n, err := s1.ReadAt(buf2, 0); err != nil {
+		t.Errorf("ReadAt: %v", err)
+	} else if n != 10 {
+		t.Errorf("ReadAt: n = %d", n)
+	}
+	bufexp2 := []byte{5, 5, 5, 5, 5, 4, 3, 2, 1, 0}
+	if !bytes.Equal(buf2, bufexp2) {
+		t.Errorf("buf (%#v) != bufexp (%#v)", buf2, bufexp2)
+	}
 }
 
 func TestReadZeros(t *testing.T) {
