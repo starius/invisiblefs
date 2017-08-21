@@ -30,6 +30,8 @@ type Sparse struct {
 	index         *C.Index
 	data, offsets Appender
 	diskStart     int64
+
+	prevOff, prevDiskStart, prevSliceLength int64
 }
 
 type byteReader struct {
@@ -70,21 +72,28 @@ func NewSparse(data, offsets Appender) (*Sparse, error) {
 		buf: make([]byte, 1),
 	}
 	for {
-		items := []uint64{0, 0, 0}
-		for i := range items {
-			items[i], err = binary.ReadUvarint(offsetsReader)
-			if err == io.EOF && i == 0 {
-				goto offsetsDone
-			} else if err != nil {
-				return nil, err
-			}
+		offDiff, err := binary.ReadVarint(offsetsReader)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, err
 		}
-		off := C.int64_t(items[0])
-		diskStart := C.int64_t(items[1])
-		sliceLength := C.int64_t(items[2])
-		C.sparse_write(s.index, off, diskStart, sliceLength)
+		diskStartDiff, err := binary.ReadUvarint(offsetsReader)
+		if err != nil {
+			return nil, err
+		}
+		sliceLengthDiff, err := binary.ReadVarint(offsetsReader)
+		if err != nil {
+			return nil, err
+		}
+		off := s.prevOff + offDiff
+		diskStart := s.prevDiskStart + int64(diskStartDiff)
+		sliceLength := s.prevSliceLength + sliceLengthDiff
+		C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(sliceLength))
+		s.prevOff = off
+		s.prevDiskStart = diskStart
+		s.prevSliceLength = sliceLength
 	}
-offsetsDone:
 	return s, nil
 }
 
@@ -186,19 +195,30 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 		return n, io.ErrShortWrite
 	}
 	// Write to s.offsets.
-	items := []uint64{uint64(off), uint64(s.diskStart), uint64(len(p))}
-	buf := make([]byte, binary.MaxVarintLen64)
-	for _, item := range items {
-		l := binary.PutUvarint(buf, item)
-		if n, err := s.offsets.Append(buf[:l]); err != nil {
-			s.diskStart = 0
-			return len(p), err
-		} else if n != l {
-			s.diskStart = 0
-			return len(p), io.ErrShortWrite
-		}
+	sliceLength := int64(len(p))
+	offDiff := off - s.prevOff
+	diskStartDiff := uint64(s.diskStart - s.prevDiskStart)
+	sliceLengthDiff := sliceLength - s.prevSliceLength
+	buf := make([]byte, 3*binary.MaxVarintLen64)
+	buf1 := buf
+	l := binary.PutVarint(buf1, offDiff)
+	buf1 = buf1[l:]
+	l = binary.PutUvarint(buf1, diskStartDiff)
+	buf1 = buf1[l:]
+	l = binary.PutVarint(buf1, sliceLengthDiff)
+	buf1 = buf1[l:]
+	buf = buf[:len(buf)-len(buf1)]
+	if n, err := s.offsets.Append(buf); err != nil {
+		s.diskStart = 0
+		return len(p), err
+	} else if n != len(buf) {
+		s.diskStart = 0
+		return len(p), io.ErrShortWrite
 	}
-	C.sparse_write(s.index, C.int64_t(off), C.int64_t(s.diskStart), C.int64_t(len(p)))
+	s.prevOff = off
+	s.prevDiskStart = s.diskStart
+	s.prevSliceLength = sliceLength
+	C.sparse_write(s.index, C.int64_t(off), C.int64_t(s.diskStart), C.int64_t(sliceLength))
 	s.diskStart += int64(len(p))
 	return pn, nil
 }
