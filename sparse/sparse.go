@@ -29,7 +29,7 @@ type AppenderSet interface {
 type Sparse struct {
 	index         *C.Index
 	data, offsets Appender
-	diskStart     int64
+	dataSize      int64
 
 	prevOff, prevDiskStart, prevSliceLength int64
 }
@@ -178,26 +178,27 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 			p = p[:len(p)-1]
 		}
 	}
-	if s.diskStart == 0 {
+	if s.dataSize == 0 {
 		var err error
-		s.diskStart, err = s.data.Size()
+		s.dataSize, err = s.data.Size()
 		if err != nil {
-			s.diskStart = 0
+			s.dataSize = 0
 			return 0, err
 		}
 	}
 	// Write to s.data.
 	if n, err := s.data.Append(p); err != nil {
-		s.diskStart = 0
+		s.dataSize = 0
 		return n, err
 	} else if n != len(p) {
-		s.diskStart = 0
+		s.dataSize = 0
 		return n, io.ErrShortWrite
 	}
 	// Write to s.offsets.
+	diskStart := s.dataSize
 	sliceLength := int64(len(p))
 	offDiff := off - s.prevOff
-	diskStartDiff := uint64(s.diskStart - s.prevDiskStart)
+	diskStartDiff := uint64(diskStart - s.prevDiskStart)
 	sliceLengthDiff := sliceLength - s.prevSliceLength
 	buf := make([]byte, 3*binary.MaxVarintLen64)
 	buf1 := buf
@@ -209,16 +210,16 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 	buf1 = buf1[l:]
 	buf = buf[:len(buf)-len(buf1)]
 	if n, err := s.offsets.Append(buf); err != nil {
-		s.diskStart = 0
+		s.dataSize = 0
 		return len(p), err
 	} else if n != len(buf) {
-		s.diskStart = 0
+		s.dataSize = 0
 		return len(p), io.ErrShortWrite
 	}
 	s.prevOff = off
-	s.prevDiskStart = s.diskStart
+	s.prevDiskStart = diskStart
 	s.prevSliceLength = sliceLength
-	C.sparse_write(s.index, C.int64_t(off), C.int64_t(s.diskStart), C.int64_t(sliceLength))
-	s.diskStart += int64(len(p))
+	C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(sliceLength))
+	s.dataSize += sliceLength
 	return pn, nil
 }
