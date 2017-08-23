@@ -3,6 +3,7 @@ package sparse
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"runtime"
 )
@@ -30,6 +31,7 @@ type Sparse struct {
 	index         *C.Index
 	data, offsets Appender
 	dataSize      int64
+	broken        bool
 
 	prevOff, prevDiskStart, prevSliceLength int64
 }
@@ -93,6 +95,10 @@ func NewSparse(data, offsets Appender) (*Sparse, error) {
 		s.prevOff = off
 		s.prevDiskStart = diskStart
 		s.prevSliceLength = sliceLength
+	}
+	s.dataSize, err = s.data.Size()
+	if err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -161,6 +167,9 @@ func allZeros(buf []byte) bool {
 }
 
 func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
+	if s.broken {
+		return 0, fmt.Errorf("The storage was spoiled in a previous operation")
+	}
 	pn := len(p)
 	// Locate this place.
 	var diskStart0, sliceLength0 C.int64_t
@@ -178,20 +187,12 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 			p = p[:len(p)-1]
 		}
 	}
-	if s.dataSize == 0 {
-		var err error
-		s.dataSize, err = s.data.Size()
-		if err != nil {
-			s.dataSize = 0
-			return 0, err
-		}
-	}
 	// Write to s.data.
 	if n, err := s.data.Append(p); err != nil {
-		s.dataSize = 0
+		s.broken = true
 		return n, err
 	} else if n != len(p) {
-		s.dataSize = 0
+		s.broken = true
 		return n, io.ErrShortWrite
 	}
 	// Write to s.offsets.
@@ -210,10 +211,10 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 	buf1 = buf1[l:]
 	buf = buf[:len(buf)-len(buf1)]
 	if n, err := s.offsets.Append(buf); err != nil {
-		s.dataSize = 0
+		s.broken = true
 		return len(p), err
 	} else if n != len(buf) {
-		s.dataSize = 0
+		s.broken = true
 		return len(p), io.ErrShortWrite
 	}
 	s.prevOff = off

@@ -2,6 +2,7 @@ package sparse
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -451,6 +452,83 @@ func TestWrites(t *testing.T) {
 		}
 		if !bytes.Equal(buf2, c.expected) {
 			t.Errorf("buf2 (%#v) != bufexp (%#v)", buf2, c.expected)
+		}
+	}
+}
+
+type BrokenAppender struct {
+	err  error
+	impl Appender
+}
+
+func (a *BrokenAppender) ReadAt(p []byte, off int64) (int, error) {
+	if a.err != nil {
+		return 0, a.err
+	}
+	return a.impl.ReadAt(p, off)
+}
+
+func (a *BrokenAppender) Append(data []byte) (int, error) {
+	if a.err != nil {
+		return 0, a.err
+	}
+	return a.impl.Append(data)
+}
+
+func (a *BrokenAppender) Size() (int64, error) {
+	if a.err != nil {
+		return 0, a.err
+	}
+	return a.impl.Size()
+}
+
+func TestError(t *testing.T) {
+	cases := []struct {
+		breakData, breakOffsets bool
+	}{
+		{true, false},
+		{false, true},
+		{true, true},
+	}
+	for _, tc := range cases {
+		data := &BrokenAppender{impl: &DummyAppender{}}
+		offsets := &BrokenAppender{impl: &DummyAppender{}}
+		s, err := NewSparse(data, offsets)
+		if err != nil {
+			t.Fatalf("NewSparse: %v", err)
+		}
+		// Write something.
+		buf := []byte{1, 2, 3}
+		if n, err := s.WriteAt(buf, 0); err != nil {
+			t.Errorf("WriteAt: %v", err)
+		} else if n != len(buf) {
+			t.Errorf("WriteAt: n = %d", n)
+		}
+		// Break it and make sure write breaks.
+		if tc.breakData {
+			data.err = fmt.Errorf("test error for data")
+		}
+		if tc.breakOffsets {
+			offsets.err = fmt.Errorf("test error for offsets")
+		}
+		if _, err := s.WriteAt(buf, 0); err == nil {
+			t.Errorf("WriteAt: want error")
+		}
+		// Fix appenders and make sure write still fails.
+		data.err = nil
+		offsets.err = nil
+		if _, err := s.WriteAt(buf, 0); err == nil {
+			t.Errorf("WriteAt: want error")
+		}
+		// Make sure read still works.
+		buf2 := make([]byte, 3)
+		if n, err := s.ReadAt(buf2, 0); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != 3 {
+			t.Errorf("ReadAt: n = %d", n)
+		}
+		if !bytes.Equal(buf2, buf) {
+			t.Errorf("buf (%#v) != bufexp (%#v)", buf2, buf)
 		}
 	}
 }
