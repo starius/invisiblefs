@@ -100,6 +100,11 @@ func NewSparse(data, offsets Appender) (*Sparse, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.dataSize != s.prevDiskStart+s.prevSliceLength {
+		return nil, fmt.Errorf("data size doesn't match records offsets: %d != %d",
+			s.dataSize, s.prevDiskStart+s.prevSliceLength,
+		)
+	}
 	return s, nil
 }
 

@@ -532,3 +532,46 @@ func TestError(t *testing.T) {
 		}
 	}
 }
+
+func TestFailsIfExtraData(t *testing.T) {
+	data := &DummyAppender{}
+	offsets := &DummyAppender{}
+	s, err := NewSparse(data, offsets)
+	if err != nil {
+		t.Fatalf("NewSparse: %v", err)
+	}
+	// Write something.
+	if n, err := s.WriteAt([]byte{1, 2, 3}, 0); err != nil {
+		t.Fatalf("WriteAt: %v", err)
+	} else if n != 3 {
+		t.Fatalf("WriteAt: n = %d", n)
+	}
+	// Write something directly to data.
+	if n, err := data.Append([]byte{4, 5}); err != nil {
+		t.Fatalf("Append: %v", err)
+	} else if n != 2 {
+		t.Fatalf("Append: n = %d", n)
+	}
+	if _, err = NewSparse(data, offsets); err == nil {
+		t.Errorf("want error")
+	}
+}
+
+func TestFailsIfDataCut(t *testing.T) {
+	data := &DummyAppender{}
+	offsets := &DummyAppender{}
+	s, err := NewSparse(data, offsets)
+	if err != nil {
+		t.Fatalf("NewSparse: %v", err)
+	}
+	// Write something.
+	if n, err := s.WriteAt([]byte{1, 2, 3}, 0); err != nil {
+		t.Fatalf("WriteAt: %v", err)
+	} else if n != 3 {
+		t.Fatalf("WriteAt: n = %d", n)
+	}
+	data2 := &DummyAppender{1, 2}
+	if _, err = NewSparse(data2, offsets); err == nil {
+		t.Errorf("want error")
+	}
+}
