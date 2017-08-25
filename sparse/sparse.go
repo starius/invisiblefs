@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"sync"
 )
 
 //go:generate g++ -std=c++11 cpp/index.cpp -c -o /tmp/index.o
@@ -32,6 +33,8 @@ type Sparse struct {
 	data, offsets Appender
 	dataSize      int64
 	broken        bool
+
+	mu sync.RWMutex
 
 	prevOff, prevDiskStart, prevSliceLength int64
 }
@@ -120,6 +123,8 @@ func zero(buf []byte) {
 }
 
 func (s *Sparse) ReadAt(p []byte, off int64) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	l := len(p)
 	var sumn int
 	for {
@@ -172,6 +177,8 @@ func allZeros(buf []byte) bool {
 }
 
 func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.broken {
 		return 0, fmt.Errorf("The storage was spoiled in a previous operation")
 	}
