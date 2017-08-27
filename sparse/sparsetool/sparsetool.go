@@ -19,7 +19,6 @@ var (
 	mountpoint = flag.String("mountpoint", "", "Where to mount")
 	dFile      = flag.String("data", ":memory:", "File with data")
 	oFile      = flag.String("offsets", ":memory:", "File with offsets")
-	bufsize    = flag.Int("bufsize", 0, "Write buffer size for data and offsets")
 	virtFile   = flag.String("virt-file", "111", "Virtual file name")
 	virtSize   = flag.Int64("virt-size", 100e9, "Virtual file size")
 )
