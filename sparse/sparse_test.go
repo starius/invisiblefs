@@ -152,7 +152,21 @@ func TestReopen(t *testing.T) {
 	}
 	bufexp2 := []byte{5, 5, 5, 5, 5, 4, 3, 2, 1, 0}
 	if !bytes.Equal(buf2, bufexp2) {
-		t.Errorf("buf (%#v) != bufexp (%#v)", buf2, bufexp2)
+		t.Errorf("buf2 (%#v) != bufexp2 (%#v)", buf2, bufexp2)
+	}
+	// Reopen one more time.
+	s2, err := NewSparse2(data, offsets)
+	if err != nil {
+		t.Fatalf("NewSparse2: %v", err)
+	}
+	buf3 := make([]byte, 10)
+	if n, err := s2.ReadAt(buf3, 0); err != nil {
+		t.Errorf("ReadAt: %v", err)
+	} else if n != 10 {
+		t.Errorf("ReadAt: n = %d", n)
+	}
+	if !bytes.Equal(buf3, bufexp2) {
+		t.Errorf("buf3 (%#v) != bufexp (%#v)", buf3, bufexp2)
 	}
 }
 
