@@ -28,15 +28,27 @@ type AppenderSet interface {
 	Remove(name string) error
 }
 
+// In case just one file is used, structure of one entry in the data file:
+//   data_len = uvarint(len(data))
+//   data
+//   parent_ptr = uvarint(&(this.parent_ptr) - &(parent.parent_ptr) OR 0)
+//   offsets_len = uvarint(len(offsets))
+//   offsets, 3n varints
+//   tail = 32 bit little endian of &(tail) - &(parent_ptr)
+
 type Sparse struct {
 	index         *C.Index
-	data, offsets Appender
+	data, offsets Appender // Field offsets is not used in one file case.
 	dataSize      int64
 	broken        bool
 
 	mu sync.RWMutex
 
 	prevOff, prevDiskStart, prevSliceLength int64
+
+	// One file case.
+	offsetsBytes []byte
+	c            *chain
 }
 
 type byteReader struct {
@@ -56,6 +68,16 @@ func (r *byteReader) ReadByte() (byte, error) {
 	}
 	r.i++
 	return r.buf[0], nil
+}
+
+func readAt(r io.ReaderAt, off, length int64) ([]byte, error) {
+	data := make([]byte, length)
+	if n, err := r.ReadAt(data, off); err != nil {
+		return nil, err
+	} else if int64(n) != length {
+		return nil, fmt.Errorf("short read")
+	}
+	return data, nil
 }
 
 func NewSparse2(data, offsets Appender) (*Sparse, error) {
@@ -107,6 +129,103 @@ func NewSparse2(data, offsets Appender) (*Sparse, error) {
 		return nil, fmt.Errorf("data size doesn't match records offsets: %d != %d",
 			s.dataSize, s.prevDiskStart+s.prevSliceLength,
 		)
+	}
+	return s, nil
+}
+
+func NewSparse1(data Appender) (*Sparse, error) {
+	s := &Sparse{
+		index: C.sparse_create(),
+		data:  data,
+	}
+	runtime.SetFinalizer(s, func(s *Sparse) {
+		C.sparse_free(s.index)
+	})
+	var err error
+	s.dataSize, err = data.Size()
+	if err != nil {
+		return nil, fmt.Errorf("data.Size: %v", err)
+	}
+	if s.dataSize == 0 {
+		s.c = newChain()
+		return s, nil
+	}
+	// Build offsetsList by reading tail and parentPtr.
+	if s.dataSize < 4 {
+		return nil, fmt.Errorf("Too short tail")
+	}
+	tailBytes, err := readAt(s.data, s.dataSize-4, 4)
+	if err != nil {
+		return nil, fmt.Errorf("reading tail: %v", err)
+	}
+	tail := binary.LittleEndian.Uint32(tailBytes)
+	if tail < 5 {
+		return nil, fmt.Errorf("too small tail")
+	}
+	parentPtr := s.dataSize - 4 - int64(tail)
+	var offsetsList [][]byte
+	var ptrList []int64
+	for {
+		if parentPtr < 0 {
+			return nil, fmt.Errorf("negative parentPtr")
+		}
+		header, err := readAt(s.data, parentPtr, s.dataSize-4-parentPtr)
+		if err != nil {
+			return nil, fmt.Errorf("reading header: %v", err)
+		}
+		parentPtrDiff, n := binary.Uvarint(header)
+		if n <= 0 {
+			return nil, fmt.Errorf("reading parentPtrDiff: bad varint")
+		}
+		header = header[n:]
+		offsetsSize, n := binary.Uvarint(header)
+		if n <= 0 {
+			return nil, fmt.Errorf("reading offsetsSize: bad varint")
+		}
+		header = header[n:]
+		if int(offsetsSize) > len(header) {
+			return nil, fmt.Errorf("offsets overflow")
+		}
+		offsetsList = append(offsetsList, header[:offsetsSize])
+		ptrList = append(ptrList, parentPtr)
+		if parentPtrDiff == 0 {
+			break
+		}
+		parentPtr -= int64(parentPtrDiff)
+	}
+	// Build and parse s.offsetsBytes.
+	var elements []chainElem
+	var sizes []int
+	for j := len(offsetsList) - 1; j >= 0; j-- {
+		o := offsetsList[j]
+		s.offsetsBytes = append(s.offsetsBytes, o...)
+		elem := chainElem{
+			inOffsets: int64(len(s.offsetsBytes)),
+			inData:    ptrList[j],
+		}
+		elements = append(elements, elem)
+		nRecords := 0
+		for len(o) > 0 {
+			items := []uint64{0, 0, 0}
+			for i := range items {
+				var n int
+				items[i], n = binary.Uvarint(o)
+				if n <= 0 {
+					return nil, fmt.Errorf("reading offsets: bad varint")
+				}
+				o = o[n:]
+			}
+			off := C.int64_t(items[0])
+			diskStart := C.int64_t(items[1])
+			sliceLength := C.int64_t(items[2])
+			C.sparse_write(s.index, off, diskStart, sliceLength)
+			nRecords++
+		}
+		sizes = append(sizes, nRecords)
+	}
+	s.c, err = restore(elements, sizes)
+	if err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -199,6 +318,21 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 			p = p[:len(p)-1]
 		}
 	}
+	var n int
+	var err error
+	if s.offsets != nil {
+		n, err = s.writeAt2(p, off)
+	} else {
+		n, err = s.writeAt1(p, off)
+	}
+	if err != nil {
+		return n, err
+	} else {
+		return pn, nil
+	}
+}
+
+func (s *Sparse) writeAt2(p []byte, off int64) (int, error) {
 	// Write to s.data.
 	if n, err := s.data.Append(p); err != nil {
 		s.broken = true
@@ -234,5 +368,65 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 	s.prevSliceLength = sliceLength
 	C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(sliceLength))
 	s.dataSize += sliceLength
-	return pn, nil
+	return len(p), nil
+}
+
+func (s *Sparse) writeAt1(p []byte, off int64) (int, error) {
+	// Prepare entry in memory.
+	parent := s.c.parent()
+	offsetsSizeEstimate := len(s.offsetsBytes) - int(parent.inOffsets)
+	buf := make([]byte, len(p)+offsetsSizeEstimate+6*binary.MaxVarintLen64+4)
+	buf1 := buf
+	n := binary.PutUvarint(buf1, uint64(len(p)))
+	buf1 = buf1[n:]
+	dataStart := s.dataSize + int64(len(buf)-len(buf1))
+	copy(buf1, p)
+	buf1 = buf1[len(p):]
+	// Write parentPtr.
+	parentPtrStart := s.dataSize + int64(len(buf)-len(buf1))
+	var parentPtrDiff uint64 = 0
+	if parent.inData != 0 {
+		parentPtrDiff = uint64(parentPtrStart - parent.inData)
+	}
+	n = binary.PutUvarint(buf1, parentPtrDiff)
+	buf1 = buf1[n:]
+	// Write to s.offsetsBytes.
+	items := []uint64{uint64(off), uint64(dataStart), uint64(len(p))}
+	offsetsBuf := make([]byte, binary.MaxVarintLen64*3)
+	offsetsBuf1 := offsetsBuf
+	for _, item := range items {
+		n := binary.PutUvarint(offsetsBuf1, item)
+		offsetsBuf1 = offsetsBuf1[n:]
+	}
+	offsetsBuf = offsetsBuf[:len(offsetsBuf)-len(offsetsBuf1)]
+	s.offsetsBytes = append(s.offsetsBytes, offsetsBuf...)
+	// Write len(offsetsBytes) and offsetsBytes to buf1.
+	offsets := s.offsetsBytes[parent.inOffsets:]
+	n = binary.PutUvarint(buf1, uint64(len(offsets)))
+	buf1 = buf1[n:]
+	copy(buf1, offsets)
+	buf1 = buf1[len(offsets):]
+	// Write tail.
+	tailPtr := s.dataSize + int64(len(buf)-len(buf1))
+	tail := uint32(tailPtr - parentPtrStart)
+	binary.LittleEndian.PutUint32(buf1, tail)
+	buf1 = buf1[4:]
+	buf = buf[:len(buf)-len(buf1)]
+	// Write buf.
+	if n, err := s.data.Append(buf); err != nil {
+		s.broken = true
+		return n, err
+	} else if n != len(buf) {
+		s.broken = true
+		return n, io.ErrShortWrite
+	}
+	s.dataSize += int64(len(buf))
+	// Update s.offsetsBytes.
+	s.c.push(chainElem{
+		inOffsets: int64(len(s.offsetsBytes)),
+		inData:    parentPtrStart,
+	})
+	// Update s.index.
+	C.sparse_write(s.index, C.int64_t(off), C.int64_t(dataStart), C.int64_t(len(p)))
+	return len(p), nil
 }

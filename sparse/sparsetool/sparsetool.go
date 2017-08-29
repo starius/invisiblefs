@@ -21,6 +21,7 @@ var (
 	oFile      = flag.String("offsets", ":memory:", "File with offsets")
 	virtFile   = flag.String("virt-file", "111", "Virtual file name")
 	virtSize   = flag.Int64("virt-size", 100e9, "Virtual file size")
+	mode       = flag.Int("mode", 1, "Mode (1 = only data file, 2 = both files")
 )
 
 type DummyAppender []byte
@@ -91,11 +92,22 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	offsets, offsetsCloser, err := open(*oFile)
-	if err != nil {
-		log.Fatal(err)
+	offsetsCloser := func() error {
+		return nil
 	}
-	s, err := sparse.NewSparse2(data, offsets)
+	var s *sparse.Sparse
+	if *mode == 2 {
+		var offsets sparse.Appender
+		offsets, offsetsCloser, err = open(*oFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		s, err = sparse.NewSparse2(data, offsets)
+	} else if *mode == 1 {
+		s, err = sparse.NewSparse1(data)
+	} else {
+		log.Fatalf("Unknown mode: %d.", *mode)
+	}
 	if err != nil {
 		log.Fatalf("Failed to create sparse object: %s.", err)
 	}

@@ -24,168 +24,187 @@ func (a *DummyAppender) Size() (int64, error) {
 	return int64(len(*a)), nil
 }
 
-func TestSparse(t *testing.T) {
-	data := &DummyAppender{}
-	offsets := &DummyAppender{}
-	s, err := NewSparse2(data, offsets)
+type sparseCase struct {
+	name   string
+	s      *Sparse
+	reopen func() (*Sparse, error)
+	data   *DummyAppender
+}
+
+func sparses() []sparseCase {
+	data1 := &DummyAppender{}
+	s1, err := NewSparse1(data1)
 	if err != nil {
-		t.Fatalf("NewSparse2: %v", err)
+		panic(err)
 	}
-	buf := make([]byte, 10)
-	if n, err := s.ReadAt(buf, 0); err != nil {
-		t.Errorf("ReadAt: %v", err)
-	} else if n != 10 {
-		t.Errorf("ReadAt: n = %d", n)
+	reopen1 := func() (*Sparse, error) {
+		return NewSparse1(data1)
 	}
-	buf2 := []byte{1, 2, 3, 4, 5}
-	if n, err := s.WriteAt(buf2, 0); err != nil {
-		t.Errorf("WriteAt: %v", err)
-	} else if n != 5 {
-		t.Errorf("WriteAt: n = %d", n)
+	data2 := &DummyAppender{}
+	offsets2 := &DummyAppender{}
+	s2, err := NewSparse2(data2, offsets2)
+	if err != nil {
+		panic(err)
 	}
-	buf3 := make([]byte, 5)
-	if n, err := s.ReadAt(buf3, 0); err != nil {
-		t.Errorf("ReadAt: %v", err)
-	} else if n != 5 {
-		t.Errorf("ReadAt: n = %d", n)
+	reopen2 := func() (*Sparse, error) {
+		return NewSparse2(data2, offsets2)
 	}
-	if !bytes.Equal(buf3, buf2) {
-		t.Errorf("buf3 (%#v) != buf2 (%#v)", buf3, buf2)
+	return []sparseCase{
+		{"s1", s1, reopen1, data1},
+		{"s2", s2, reopen2, data2},
 	}
-	if n, err := s.WriteAt(buf2, 3); err != nil {
-		t.Errorf("WriteAt: %v", err)
-	} else if n != 5 {
-		t.Errorf("WriteAt: n = %d", n)
-	}
-	buf4 := make([]byte, 8)
-	if n, err := s.ReadAt(buf4, 0); err != nil {
-		t.Errorf("ReadAt: %v", err)
-	} else if n != 8 {
-		t.Errorf("ReadAt: n = %d", n)
-	}
-	buf4exp := []byte{1, 2, 3, 1, 2, 3, 4, 5}
-	if !bytes.Equal(buf4, buf4exp) {
-		t.Errorf("buf4 (%#v) != buf4exp (%#v)", buf4, buf4exp)
+}
+
+func TestSparse(t *testing.T) {
+	for _, tc := range sparses() {
+		s := tc.s
+		buf := make([]byte, 10)
+		if n, err := s.ReadAt(buf, 0); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != 10 {
+			t.Errorf("ReadAt: n = %d", n)
+		}
+		buf2 := []byte{1, 2, 3, 4, 5}
+		if n, err := s.WriteAt(buf2, 0); err != nil {
+			t.Errorf("WriteAt: %v", err)
+		} else if n != 5 {
+			t.Errorf("WriteAt: n = %d", n)
+		}
+		buf3 := make([]byte, 5)
+		if n, err := s.ReadAt(buf3, 0); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != 5 {
+			t.Errorf("ReadAt: n = %d", n)
+		}
+		if !bytes.Equal(buf3, buf2) {
+			t.Errorf("buf3 (%#v) != buf2 (%#v)", buf3, buf2)
+		}
+		if n, err := s.WriteAt(buf2, 3); err != nil {
+			t.Errorf("WriteAt: %v", err)
+		} else if n != 5 {
+			t.Errorf("WriteAt: n = %d", n)
+		}
+		buf4 := make([]byte, 8)
+		if n, err := s.ReadAt(buf4, 0); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != 8 {
+			t.Errorf("ReadAt: n = %d", n)
+		}
+		buf4exp := []byte{1, 2, 3, 1, 2, 3, 4, 5}
+		if !bytes.Equal(buf4, buf4exp) {
+			t.Errorf("buf4 (%#v) != buf4exp (%#v)", buf4, buf4exp)
+		}
 	}
 }
 
 func TestAppend(t *testing.T) {
-	data := &DummyAppender{}
-	offsets := &DummyAppender{}
-	s, err := NewSparse2(data, offsets)
-	if err != nil {
-		t.Fatalf("NewSparse2: %v", err)
-	}
-	for i := 0; i < 100; i++ {
-		buf := make([]byte, 10)
-		for j := range buf {
-			buf[j] = byte(i)
+	for _, tc := range sparses() {
+		s := tc.s
+		for i := 0; i < 100; i++ {
+			buf := make([]byte, 10)
+			for j := range buf {
+				buf[j] = byte(i)
+			}
+			if n, err := s.WriteAt(buf, int64(i*10)); err != nil {
+				t.Errorf("WriteAt: %v", err)
+			} else if n != 10 {
+				t.Errorf("WriteAt: n = %d", n)
+			}
 		}
-		if n, err := s.WriteAt(buf, int64(i*10)); err != nil {
-			t.Errorf("WriteAt: %v", err)
-		} else if n != 10 {
-			t.Errorf("WriteAt: n = %d", n)
+		buf := make([]byte, 1000)
+		if n, err := s.ReadAt(buf, 0); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != 1000 {
+			t.Errorf("ReadAt: n = %d", n)
 		}
-	}
-	buf := make([]byte, 1000)
-	if n, err := s.ReadAt(buf, 0); err != nil {
-		t.Errorf("ReadAt: %v", err)
-	} else if n != 1000 {
-		t.Errorf("ReadAt: n = %d", n)
-	}
-	bufexp := make([]byte, 1000)
-	for i := 0; i < 100; i++ {
-		for j := 0; j < 10; j++ {
-			bufexp[i*10+j] = byte(i)
+		bufexp := make([]byte, 1000)
+		for i := 0; i < 100; i++ {
+			for j := 0; j < 10; j++ {
+				bufexp[i*10+j] = byte(i)
+			}
 		}
-	}
-	if !bytes.Equal(buf, bufexp) {
-		t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
+		if !bytes.Equal(buf, bufexp) {
+			t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
+		}
 	}
 }
 
 func TestReopen(t *testing.T) {
-	data := &DummyAppender{}
-	offsets := &DummyAppender{}
-	s, err := NewSparse2(data, offsets)
-	if err != nil {
-		t.Fatalf("NewSparse2: %v", err)
-	}
-	// Write concentric slices.
-	for i := 0; i < 5; i++ {
-		buf := make([]byte, 10-2*i)
-		for j := 0; j < len(buf); j++ {
-			buf[j] = byte(i)
+	for _, tc := range sparses() {
+		s := tc.s
+		// Write concentric slices.
+		for i := 0; i < 5; i++ {
+			buf := make([]byte, 10-2*i)
+			for j := 0; j < len(buf); j++ {
+				buf[j] = byte(i)
+			}
+			if n, err := s.WriteAt(buf, int64(i)); err != nil {
+				t.Errorf("WriteAt: %v", err)
+			} else if n != len(buf) {
+				t.Errorf("WriteAt: n = %d", n)
+			}
 		}
-		if n, err := s.WriteAt(buf, int64(i)); err != nil {
+		// Reopen.
+		s1, err := tc.reopen()
+		if err != nil {
+			t.Fatalf("reopen: %v", err)
+		}
+		buf := make([]byte, 10)
+		if n, err := s1.ReadAt(buf, 0); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != 10 {
+			t.Errorf("ReadAt: n = %d", n)
+		}
+		bufexp := []byte{0, 1, 2, 3, 4, 4, 3, 2, 1, 0}
+		if !bytes.Equal(buf, bufexp) {
+			t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
+		}
+		// Write more.
+		if n, err := s1.WriteAt([]byte{5, 5, 5, 5, 5}, 0); err != nil {
 			t.Errorf("WriteAt: %v", err)
-		} else if n != len(buf) {
+		} else if n != 5 {
 			t.Errorf("WriteAt: n = %d", n)
 		}
-	}
-	// Reopen.
-	s1, err := NewSparse2(data, offsets)
-	if err != nil {
-		t.Fatalf("NewSparse2: %v", err)
-	}
-	buf := make([]byte, 10)
-	if n, err := s1.ReadAt(buf, 0); err != nil {
-		t.Errorf("ReadAt: %v", err)
-	} else if n != 10 {
-		t.Errorf("ReadAt: n = %d", n)
-	}
-	bufexp := []byte{0, 1, 2, 3, 4, 4, 3, 2, 1, 0}
-	if !bytes.Equal(buf, bufexp) {
-		t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
-	}
-	// Write more.
-	if n, err := s1.WriteAt([]byte{5, 5, 5, 5, 5}, 0); err != nil {
-		t.Errorf("WriteAt: %v", err)
-	} else if n != 5 {
-		t.Errorf("WriteAt: n = %d", n)
-	}
-	buf2 := make([]byte, 10)
-	if n, err := s1.ReadAt(buf2, 0); err != nil {
-		t.Errorf("ReadAt: %v", err)
-	} else if n != 10 {
-		t.Errorf("ReadAt: n = %d", n)
-	}
-	bufexp2 := []byte{5, 5, 5, 5, 5, 4, 3, 2, 1, 0}
-	if !bytes.Equal(buf2, bufexp2) {
-		t.Errorf("buf2 (%#v) != bufexp2 (%#v)", buf2, bufexp2)
-	}
-	// Reopen one more time.
-	s2, err := NewSparse2(data, offsets)
-	if err != nil {
-		t.Fatalf("NewSparse2: %v", err)
-	}
-	buf3 := make([]byte, 10)
-	if n, err := s2.ReadAt(buf3, 0); err != nil {
-		t.Errorf("ReadAt: %v", err)
-	} else if n != 10 {
-		t.Errorf("ReadAt: n = %d", n)
-	}
-	if !bytes.Equal(buf3, bufexp2) {
-		t.Errorf("buf3 (%#v) != bufexp (%#v)", buf3, bufexp2)
+		buf2 := make([]byte, 10)
+		if n, err := s1.ReadAt(buf2, 0); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != 10 {
+			t.Errorf("ReadAt: n = %d", n)
+		}
+		bufexp2 := []byte{5, 5, 5, 5, 5, 4, 3, 2, 1, 0}
+		if !bytes.Equal(buf2, bufexp2) {
+			t.Errorf("buf2 (%#v) != bufexp2 (%#v)", buf2, bufexp2)
+		}
+		// Reopen one more time.
+		s2, err := tc.reopen()
+		if err != nil {
+			t.Fatalf("reopen: %v", err)
+		}
+		buf3 := make([]byte, 10)
+		if n, err := s2.ReadAt(buf3, 0); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != 10 {
+			t.Errorf("ReadAt: n = %d", n)
+		}
+		if !bytes.Equal(buf3, bufexp2) {
+			t.Errorf("buf3 (%#v) != bufexp (%#v)", buf3, bufexp2)
+		}
 	}
 }
 
 func TestReadZeros(t *testing.T) {
-	data := &DummyAppender{}
-	offsets := &DummyAppender{}
-	s, err := NewSparse2(data, offsets)
-	if err != nil {
-		t.Fatalf("NewSparse2: %v", err)
-	}
-	buf := []byte{1, 2, 3, 4, 5}
-	if n, err := s.ReadAt(buf, 0); err != nil {
-		t.Errorf("ReadAt: %v", err)
-	} else if n != len(buf) {
-		t.Errorf("ReadAt: n = %d", n)
-	}
-	bufexp := []byte{0, 0, 0, 0, 0}
-	if !bytes.Equal(buf, bufexp) {
-		t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
+	for _, tc := range sparses() {
+		s := tc.s
+		buf := []byte{1, 2, 3, 4, 5}
+		if n, err := s.ReadAt(buf, 0); err != nil {
+			t.Errorf("ReadAt: %v", err)
+		} else if n != len(buf) {
+			t.Errorf("ReadAt: n = %d", n)
+		}
+		bufexp := []byte{0, 0, 0, 0, 0}
+		if !bytes.Equal(buf, bufexp) {
+			t.Errorf("buf (%#v) != bufexp (%#v)", buf, bufexp)
+		}
 	}
 }
 
@@ -431,41 +450,38 @@ func TestWrites(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		data := &DummyAppender{}
-		offsets := &DummyAppender{}
-		s, err := NewSparse2(data, offsets)
-		if err != nil {
-			t.Fatalf("NewSparse2: %v", err)
-		}
-		for _, write := range c.writes {
-			if n, err := s.WriteAt(write.data, write.off); err != nil {
-				t.Errorf("WriteAt: %v", err)
-			} else if n != len(write.data) {
-				t.Errorf("WriteAt: n = %d", n)
+		for _, tc := range sparses() {
+			s := tc.s
+			for _, write := range c.writes {
+				if n, err := s.WriteAt(write.data, write.off); err != nil {
+					t.Errorf("WriteAt: %v", err)
+				} else if n != len(write.data) {
+					t.Errorf("WriteAt: n = %d", n)
+				}
 			}
-		}
-		buf := make([]byte, len(c.expected))
-		if n, err := s.ReadAt(buf, c.readOff); err != nil {
-			t.Errorf("ReadAt: %v", err)
-		} else if n != len(c.expected) {
-			t.Errorf("ReadAt: n = %d", n)
-		}
-		if !bytes.Equal(buf, c.expected) {
-			t.Errorf("buf (%#v) != bufexp (%#v)", buf, c.expected)
-		}
-		// Reopen.
-		s1, err := NewSparse2(data, offsets)
-		if err != nil {
-			t.Fatalf("NewSparse2: %v", err)
-		}
-		buf2 := make([]byte, len(c.expected))
-		if n, err := s1.ReadAt(buf2, c.readOff); err != nil {
-			t.Errorf("ReadAt: %v", err)
-		} else if n != len(c.expected) {
-			t.Errorf("ReadAt: n = %d", n)
-		}
-		if !bytes.Equal(buf2, c.expected) {
-			t.Errorf("buf2 (%#v) != bufexp (%#v)", buf2, c.expected)
+			buf := make([]byte, len(c.expected))
+			if n, err := s.ReadAt(buf, c.readOff); err != nil {
+				t.Errorf("ReadAt: %v", err)
+			} else if n != len(c.expected) {
+				t.Errorf("ReadAt: n = %d", n)
+			}
+			if !bytes.Equal(buf, c.expected) {
+				t.Errorf("buf (%#v) != bufexp (%#v)", buf, c.expected)
+			}
+			// Reopen.
+			s1, err := tc.reopen()
+			if err != nil {
+				t.Fatalf("reopen: %v", err)
+			}
+			buf2 := make([]byte, len(c.expected))
+			if n, err := s1.ReadAt(buf2, c.readOff); err != nil {
+				t.Errorf("ReadAt: %v", err)
+			} else if n != len(c.expected) {
+				t.Errorf("ReadAt: n = %d", n)
+			}
+			if !bytes.Equal(buf2, c.expected) {
+				t.Errorf("buf2 (%#v) != bufexp (%#v)", buf2, c.expected)
+			}
 		}
 	}
 }
@@ -498,18 +514,25 @@ func (a *BrokenAppender) Size() (int64, error) {
 
 func TestError(t *testing.T) {
 	cases := []struct {
-		breakData, breakOffsets bool
+		breakData, breakOffsets, use2 bool
 	}{
-		{true, false},
-		{false, true},
-		{true, true},
+		{true, false, true},
+		{false, true, true},
+		{true, true, true},
+		{true, false, false},
 	}
 	for _, tc := range cases {
 		data := &BrokenAppender{impl: &DummyAppender{}}
 		offsets := &BrokenAppender{impl: &DummyAppender{}}
-		s, err := NewSparse2(data, offsets)
+		var s *Sparse
+		var err error
+		if tc.use2 {
+			s, err = NewSparse2(data, offsets)
+		} else {
+			s, err = NewSparse1(data)
+		}
 		if err != nil {
-			t.Fatalf("NewSparse2: %v", err)
+			t.Fatalf("NewSparse: %v", err)
 		}
 		// Write something.
 		buf := []byte{1, 2, 3}
@@ -548,26 +571,23 @@ func TestError(t *testing.T) {
 }
 
 func TestFailsIfExtraData(t *testing.T) {
-	data := &DummyAppender{}
-	offsets := &DummyAppender{}
-	s, err := NewSparse2(data, offsets)
-	if err != nil {
-		t.Fatalf("NewSparse2: %v", err)
-	}
-	// Write something.
-	if n, err := s.WriteAt([]byte{1, 2, 3}, 0); err != nil {
-		t.Fatalf("WriteAt: %v", err)
-	} else if n != 3 {
-		t.Fatalf("WriteAt: n = %d", n)
-	}
-	// Write something directly to data.
-	if n, err := data.Append([]byte{4, 5}); err != nil {
-		t.Fatalf("Append: %v", err)
-	} else if n != 2 {
-		t.Fatalf("Append: n = %d", n)
-	}
-	if _, err = NewSparse2(data, offsets); err == nil {
-		t.Errorf("want error")
+	for _, tc := range sparses() {
+		s := tc.s
+		// Write something.
+		if n, err := s.WriteAt([]byte{1, 2, 3}, 0); err != nil {
+			t.Fatalf("WriteAt: %v", err)
+		} else if n != 3 {
+			t.Fatalf("WriteAt: n = %d", n)
+		}
+		// Write something directly to data.
+		if n, err := tc.data.Append([]byte{4, 5}); err != nil {
+			t.Fatalf("Append: %v", err)
+		} else if n != 2 {
+			t.Fatalf("Append: n = %d", n)
+		}
+		if _, err := tc.reopen(); err == nil {
+			t.Errorf("want error")
+		}
 	}
 }
 
