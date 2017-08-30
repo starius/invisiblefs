@@ -332,18 +332,7 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 	}
 }
 
-func (s *Sparse) writeAt2(p []byte, off int64) (int, error) {
-	// Write to s.data.
-	if n, err := s.data.Append(p); err != nil {
-		s.broken = true
-		return n, err
-	} else if n != len(p) {
-		s.broken = true
-		return n, io.ErrShortWrite
-	}
-	// Write to s.offsets.
-	diskStart := s.dataSize
-	sliceLength := int64(len(p))
+func (s *Sparse) writeOffsets(off, diskStart, sliceLength int64) []byte {
 	offDiff := off - s.prevOff
 	diskStartDiff := uint64(diskStart - s.prevDiskStart)
 	sliceLengthDiff := sliceLength - s.prevSliceLength
@@ -356,6 +345,25 @@ func (s *Sparse) writeAt2(p []byte, off int64) (int, error) {
 	l = binary.PutVarint(buf1, sliceLengthDiff)
 	buf1 = buf1[l:]
 	buf = buf[:len(buf)-len(buf1)]
+	s.prevOff = off
+	s.prevDiskStart = diskStart
+	s.prevSliceLength = sliceLength
+	return buf
+}
+
+func (s *Sparse) writeAt2(p []byte, off int64) (int, error) {
+	// Write to s.data.
+	if n, err := s.data.Append(p); err != nil {
+		s.broken = true
+		return n, err
+	} else if n != len(p) {
+		s.broken = true
+		return n, io.ErrShortWrite
+	}
+	// Write to s.offsets.
+	diskStart := s.dataSize
+	sliceLength := int64(len(p))
+	buf := s.writeOffsets(off, diskStart, sliceLength)
 	if n, err := s.offsets.Append(buf); err != nil {
 		s.broken = true
 		return len(p), err
@@ -363,9 +371,6 @@ func (s *Sparse) writeAt2(p []byte, off int64) (int, error) {
 		s.broken = true
 		return len(p), io.ErrShortWrite
 	}
-	s.prevOff = off
-	s.prevDiskStart = diskStart
-	s.prevSliceLength = sliceLength
 	C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(sliceLength))
 	s.dataSize += sliceLength
 	return len(p), nil
