@@ -206,19 +206,28 @@ func NewSparse1(data Appender) (*Sparse, error) {
 		elements = append(elements, elem)
 		nRecords := 0
 		for len(o) > 0 {
-			items := []uint64{0, 0, 0}
-			for i := range items {
-				var n int
-				items[i], n = binary.Uvarint(o)
-				if n <= 0 {
-					return nil, fmt.Errorf("reading offsets: bad varint")
-				}
-				o = o[n:]
+			offDiff, n := binary.Varint(o)
+			if n <= 0 {
+				return nil, fmt.Errorf("reading offsets: bad varint")
 			}
-			off := C.int64_t(items[0])
-			diskStart := C.int64_t(items[1])
-			sliceLength := C.int64_t(items[2])
-			C.sparse_write(s.index, off, diskStart, sliceLength)
+			o = o[n:]
+			diskStartDiff, n := binary.Uvarint(o)
+			if n <= 0 {
+				return nil, fmt.Errorf("reading offsets: bad varint")
+			}
+			o = o[n:]
+			sliceLengthDiff, n := binary.Varint(o)
+			if n <= 0 {
+				return nil, fmt.Errorf("reading offsets: bad varint")
+			}
+			o = o[n:]
+			off := s.prevOff + offDiff
+			diskStart := s.prevDiskStart + int64(diskStartDiff)
+			sliceLength := s.prevSliceLength + sliceLengthDiff
+			C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(sliceLength))
+			s.prevOff = off
+			s.prevDiskStart = diskStart
+			s.prevSliceLength = sliceLength
 			nRecords++
 		}
 		sizes = append(sizes, nRecords)
@@ -396,14 +405,7 @@ func (s *Sparse) writeAt1(p []byte, off int64) (int, error) {
 	n = binary.PutUvarint(buf1, parentPtrDiff)
 	buf1 = buf1[n:]
 	// Write to s.offsetsBytes.
-	items := []uint64{uint64(off), uint64(dataStart), uint64(len(p))}
-	offsetsBuf := make([]byte, binary.MaxVarintLen64*3)
-	offsetsBuf1 := offsetsBuf
-	for _, item := range items {
-		n := binary.PutUvarint(offsetsBuf1, item)
-		offsetsBuf1 = offsetsBuf1[n:]
-	}
-	offsetsBuf = offsetsBuf[:len(offsetsBuf)-len(offsetsBuf1)]
+	offsetsBuf := s.writeOffsets(off, dataStart, int64(len(p)))
 	s.offsetsBytes = append(s.offsetsBytes, offsetsBuf...)
 	// Write len(offsetsBytes) and offsetsBytes to buf1.
 	offsets := s.offsetsBytes[parent.inOffsets:]
