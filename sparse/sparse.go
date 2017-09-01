@@ -80,6 +80,36 @@ func readAt(r io.ReaderAt, off, length int64) ([]byte, error) {
 	return data, nil
 }
 
+func (s *Sparse) putOffsets(o []byte) (int, error) {
+	nRecords := 0
+	for len(o) > 0 {
+		offDiff, n := binary.Varint(o)
+		if n <= 0 {
+			return 0, fmt.Errorf("reading offsets: bad varint")
+		}
+		o = o[n:]
+		diskStartDiff, n := binary.Uvarint(o)
+		if n <= 0 {
+			return 0, fmt.Errorf("reading offsets: bad varint")
+		}
+		o = o[n:]
+		sliceLengthDiff, n := binary.Varint(o)
+		if n <= 0 {
+			return 0, fmt.Errorf("reading offsets: bad varint")
+		}
+		o = o[n:]
+		off := s.prevOff + offDiff
+		diskStart := s.prevDiskStart + int64(diskStartDiff)
+		sliceLength := s.prevSliceLength + sliceLengthDiff
+		C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(sliceLength))
+		s.prevOff = off
+		s.prevDiskStart = diskStart
+		s.prevSliceLength = sliceLength
+		nRecords++
+	}
+	return nRecords, nil
+}
+
 func NewSparse2(data, offsets Appender) (*Sparse, error) {
 	s := &Sparse{
 		index:   C.sparse_create(),
@@ -204,31 +234,9 @@ func NewSparse1(data Appender) (*Sparse, error) {
 			inData:    ptrList[j],
 		}
 		elements = append(elements, elem)
-		nRecords := 0
-		for len(o) > 0 {
-			offDiff, n := binary.Varint(o)
-			if n <= 0 {
-				return nil, fmt.Errorf("reading offsets: bad varint")
-			}
-			o = o[n:]
-			diskStartDiff, n := binary.Uvarint(o)
-			if n <= 0 {
-				return nil, fmt.Errorf("reading offsets: bad varint")
-			}
-			o = o[n:]
-			sliceLengthDiff, n := binary.Varint(o)
-			if n <= 0 {
-				return nil, fmt.Errorf("reading offsets: bad varint")
-			}
-			o = o[n:]
-			off := s.prevOff + offDiff
-			diskStart := s.prevDiskStart + int64(diskStartDiff)
-			sliceLength := s.prevSliceLength + sliceLengthDiff
-			C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(sliceLength))
-			s.prevOff = off
-			s.prevDiskStart = diskStart
-			s.prevSliceLength = sliceLength
-			nRecords++
+		nRecords, err := s.putOffsets(o)
+		if err != nil {
+			return nil, err
 		}
 		sizes = append(sizes, nRecords)
 	}
