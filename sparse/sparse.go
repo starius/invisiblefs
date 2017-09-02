@@ -51,25 +51,6 @@ type Sparse struct {
 	c            *chain
 }
 
-type byteReader struct {
-	a    Appender
-	i, n int64
-	buf  []byte
-}
-
-func (r *byteReader) ReadByte() (byte, error) {
-	if r.i >= r.n {
-		return 0, io.EOF
-	}
-	if n, err := r.a.ReadAt(r.buf, r.i); err != nil {
-		return 0, err
-	} else if n != 1 {
-		return 0, io.EOF
-	}
-	r.i++
-	return r.buf[0], nil
-}
-
 func readAt(r io.ReaderAt, off, length int64) ([]byte, error) {
 	data := make([]byte, length)
 	if n, err := r.ReadAt(data, off); err != nil {
@@ -123,33 +104,13 @@ func NewSparse2(data, offsets Appender) (*Sparse, error) {
 	if err != nil {
 		return nil, err
 	}
-	offsetsReader := &byteReader{
-		a:   offsets,
-		n:   offsetsSize,
-		buf: make([]byte, 1),
+	o, err := readAt(offsets, 0, offsetsSize)
+	if err != nil {
+		return nil, err
 	}
-	for {
-		offDiff, err := binary.ReadVarint(offsetsReader)
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return nil, err
-		}
-		diskStartDiff, err := binary.ReadUvarint(offsetsReader)
-		if err != nil {
-			return nil, err
-		}
-		sliceLengthDiff, err := binary.ReadVarint(offsetsReader)
-		if err != nil {
-			return nil, err
-		}
-		off := s.prevOff + offDiff
-		diskStart := s.prevDiskStart + int64(diskStartDiff)
-		sliceLength := s.prevSliceLength + sliceLengthDiff
-		C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(sliceLength))
-		s.prevOff = off
-		s.prevDiskStart = diskStart
-		s.prevSliceLength = sliceLength
+	_, err = s.putOffsets(o)
+	if err != nil {
+		return nil, err
 	}
 	s.dataSize, err = s.data.Size()
 	if err != nil {
