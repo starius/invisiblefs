@@ -5,16 +5,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"runtime"
 	"sync"
+
+	"github.com/starius/invisiblefs/sparse/llrbindex"
 )
-
-//go:generate g++ -std=c++11 cpp/index.cpp -c -o /tmp/index.o
-
-// #cgo CFLAGS: -I${SRCDIR}
-// #cgo LDFLAGS: /tmp/index.o -lstdc++
-// #include "cpp/index.h"
-import "C"
 
 type Appender interface {
 	io.ReaderAt
@@ -37,7 +31,7 @@ type AppenderSet interface {
 //   tail = 32 bit little endian of &(tail) - &(parent_ptr)
 
 type Sparse struct {
-	index         *C.Index
+	index         llrbindex.Index
 	data, offsets Appender // Field offsets is not used in one file case.
 	dataSize      int64
 	broken        bool
@@ -82,7 +76,7 @@ func (s *Sparse) putOffsets(o []byte) (int, error) {
 		off := s.prevOff + offDiff
 		diskStart := s.prevDiskStart + int64(diskStartDiff)
 		sliceLength := s.prevSliceLength + sliceLengthDiff
-		C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(sliceLength))
+		s.index.Write(off, diskStart, sliceLength)
 		s.prevOff = off
 		s.prevDiskStart = diskStart
 		s.prevSliceLength = sliceLength
@@ -93,13 +87,10 @@ func (s *Sparse) putOffsets(o []byte) (int, error) {
 
 func NewSparse2(data, offsets Appender) (*Sparse, error) {
 	s := &Sparse{
-		index:   C.sparse_create(),
+		index:   llrbindex.Index{},
 		data:    data,
 		offsets: offsets,
 	}
-	runtime.SetFinalizer(s, func(s *Sparse) {
-		C.sparse_free(s.index)
-	})
 	offsetsSize, err := offsets.Size()
 	if err != nil {
 		return nil, err
@@ -126,12 +117,9 @@ func NewSparse2(data, offsets Appender) (*Sparse, error) {
 
 func NewSparse1(data Appender) (*Sparse, error) {
 	s := &Sparse{
-		index: C.sparse_create(),
+		index: llrbindex.Index{},
 		data:  data,
 	}
-	runtime.SetFinalizer(s, func(s *Sparse) {
-		C.sparse_free(s.index)
-	})
 	var err error
 	s.dataSize, err = data.Size()
 	if err != nil {
@@ -225,13 +213,12 @@ func (s *Sparse) ReadAt(p []byte, off int64) (int, error) {
 	l := len(p)
 	var sumn int
 	for {
-		var diskStart, sliceLength C.int64_t
-		r := int64(C.sparse_read(s.index, C.int64_t(off), &diskStart, &sliceLength))
+		diskStart, sliceLength, r := s.index.Read(off)
 		if sliceLength != 0 {
 			if int(sliceLength) > len(p) {
-				sliceLength = C.int64_t(len(p))
+				sliceLength = int64(len(p))
 			}
-			n, err := s.data.ReadAt(p[:sliceLength], int64(diskStart))
+			n, err := s.data.ReadAt(p[:sliceLength], diskStart)
 			sumn += n
 			if err != nil {
 				return sumn, err
@@ -239,7 +226,7 @@ func (s *Sparse) ReadAt(p []byte, off int64) (int, error) {
 				return sumn, io.EOF
 			}
 			p = p[sliceLength:]
-			off += int64(sliceLength)
+			off += sliceLength
 			if len(p) == 0 {
 				break
 			}
@@ -281,8 +268,7 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 	}
 	pn := len(p)
 	// Locate this place.
-	var diskStart0, sliceLength0 C.int64_t
-	r := int64(C.sparse_read(s.index, C.int64_t(off), &diskStart0, &sliceLength0))
+	_, sliceLength0, r := s.index.Read(off)
 	if sliceLength0 == 0 && r == -1 || int(r) > len(p) {
 		// Optimizations when writing to new place.
 		if allZeros(p) {
@@ -349,7 +335,7 @@ func (s *Sparse) writeAt2(p []byte, off int64) (int, error) {
 		s.broken = true
 		return len(p), io.ErrShortWrite
 	}
-	C.sparse_write(s.index, C.int64_t(off), C.int64_t(diskStart), C.int64_t(sliceLength))
+	s.index.Write(off, diskStart, sliceLength)
 	s.dataSize += sliceLength
 	return len(p), nil
 }
@@ -403,6 +389,6 @@ func (s *Sparse) writeAt1(p []byte, off int64) (int, error) {
 		inData:    parentPtrStart,
 	})
 	// Update s.index.
-	C.sparse_write(s.index, C.int64_t(off), C.int64_t(dataStart), C.int64_t(len(p)))
+	s.index.Write(off, dataStart, int64(len(p)))
 	return len(p), nil
 }
