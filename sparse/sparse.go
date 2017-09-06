@@ -260,6 +260,26 @@ func allZeros(buf []byte) bool {
 	return true
 }
 
+func countPrefixZeros(buf []byte) (n int) {
+	for _, b := range buf {
+		if b != 0 {
+			return
+		}
+		n++
+	}
+	return
+}
+
+func countSuffixZeros(buf []byte) (n int) {
+	for i := len(buf) - 1; i >= 0; i-- {
+		if buf[i] != 0 {
+			return
+		}
+		n++
+	}
+	return
+}
+
 func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -274,12 +294,11 @@ func (s *Sparse) WriteAt(p []byte, off int64) (int, error) {
 		if allZeros(p) {
 			return pn, nil
 		}
-		for p[0] == 0 {
-			p = p[1:]
-			off++
-		}
-		for p[len(p)-1] == 0 {
-			p = p[:len(p)-1]
+		pz := countPrefixZeros(p)
+		sz := countSuffixZeros(p)
+		if pz+sz > 100 {
+			p = p[pz : len(p)-sz]
+			off += int64(pz)
 		}
 	}
 	var n int
