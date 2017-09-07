@@ -1,13 +1,13 @@
 package sparsefuse
 
 import (
+	"io"
 	"log"
 	"os"
 	"sync"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	"github.com/starius/invisiblefs/sparse"
 	"golang.org/x/net/context"
 )
 
@@ -22,11 +22,16 @@ type Dir struct {
 
 type File struct {
 	m    sync.Mutex
-	s    *sparse.Sparse
+	s    file
 	size int64
 }
 
-func New(fname string, size int64, s *sparse.Sparse) (*Fs, error) {
+type file interface {
+	io.ReaderAt
+	io.WriterAt
+}
+
+func New(fname string, size int64, s file) (*Fs, error) {
 	f := &File{
 		s:    s,
 		size: size,
