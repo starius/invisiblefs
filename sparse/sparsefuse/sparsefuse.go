@@ -1,10 +1,13 @@
 package sparsefuse
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -107,4 +110,43 @@ func (f *File) Write(ctx context.Context, req *fuse.WriteRequest, res *fuse.Writ
 
 func (f *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	return nil
+}
+
+func Run(mountpoint string, f fs.FS, closer func()) {
+	mp, err := fuse.Mount(
+		mountpoint, fuse.FSName("sparse"),
+		fuse.Subtype("sparse"), fuse.LocalVolume(),
+		fuse.AllowOther(),
+	)
+	if err != nil {
+		log.Fatalf("Failed to mount FUSE: %s.", err)
+	}
+	defer mp.Close()
+	var wg sync.WaitGroup
+	// Handle signals.
+	c := make(chan os.Signal, 2)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sig := <-c
+		fmt.Printf("Caught %s.\n", sig)
+		fmt.Printf("Unmounting %s.\n", mountpoint)
+		if err := fuse.Unmount(mountpoint); err != nil {
+			fmt.Printf("Failed to unmount: %s.\n", err)
+		} else {
+			fmt.Printf("Successfully unmount %s.\n", mountpoint)
+		}
+		closer()
+		fmt.Printf("Exiting.\n")
+	}()
+	if err = fs.Serve(mp, f); err != nil {
+		log.Fatal(err)
+	}
+	// Check if the mount process has an error to report.
+	<-mp.Ready
+	if err := mp.MountError; err != nil {
+		log.Fatal(err)
+	}
+	wg.Wait()
 }
