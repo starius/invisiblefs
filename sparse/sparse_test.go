@@ -27,9 +27,9 @@ func (a *DummyAppender) Size() (int64, error) {
 func TestSparse(t *testing.T) {
 	data := &DummyAppender{}
 	offsets := &DummyAppender{}
-	s, err := NewSparse(data, offsets)
+	s, err := NewSparse2(data, offsets)
 	if err != nil {
-		t.Fatalf("NewSparse: %v", err)
+		t.Fatalf("NewSparse2: %v", err)
 	}
 	buf := make([]byte, 10)
 	if n, err := s.ReadAt(buf, 0); err != nil {
@@ -72,9 +72,9 @@ func TestSparse(t *testing.T) {
 func TestAppend(t *testing.T) {
 	data := &DummyAppender{}
 	offsets := &DummyAppender{}
-	s, err := NewSparse(data, offsets)
+	s, err := NewSparse2(data, offsets)
 	if err != nil {
-		t.Fatalf("NewSparse: %v", err)
+		t.Fatalf("NewSparse2: %v", err)
 	}
 	for i := 0; i < 100; i++ {
 		buf := make([]byte, 10)
@@ -107,9 +107,9 @@ func TestAppend(t *testing.T) {
 func TestReopen(t *testing.T) {
 	data := &DummyAppender{}
 	offsets := &DummyAppender{}
-	s, err := NewSparse(data, offsets)
+	s, err := NewSparse2(data, offsets)
 	if err != nil {
-		t.Fatalf("NewSparse: %v", err)
+		t.Fatalf("NewSparse2: %v", err)
 	}
 	// Write concentric slices.
 	for i := 0; i < 5; i++ {
@@ -124,9 +124,9 @@ func TestReopen(t *testing.T) {
 		}
 	}
 	// Reopen.
-	s1, err := NewSparse(data, offsets)
+	s1, err := NewSparse2(data, offsets)
 	if err != nil {
-		t.Fatalf("NewSparse: %v", err)
+		t.Fatalf("NewSparse2: %v", err)
 	}
 	buf := make([]byte, 10)
 	if n, err := s1.ReadAt(buf, 0); err != nil {
@@ -159,9 +159,9 @@ func TestReopen(t *testing.T) {
 func TestReadZeros(t *testing.T) {
 	data := &DummyAppender{}
 	offsets := &DummyAppender{}
-	s, err := NewSparse(data, offsets)
+	s, err := NewSparse2(data, offsets)
 	if err != nil {
-		t.Fatalf("NewSparse: %v", err)
+		t.Fatalf("NewSparse2: %v", err)
 	}
 	buf := []byte{1, 2, 3, 4, 5}
 	if n, err := s.ReadAt(buf, 0); err != nil {
@@ -419,9 +419,9 @@ func TestWrites(t *testing.T) {
 	for _, c := range cases {
 		data := &DummyAppender{}
 		offsets := &DummyAppender{}
-		s, err := NewSparse(data, offsets)
+		s, err := NewSparse2(data, offsets)
 		if err != nil {
-			t.Fatalf("NewSparse: %v", err)
+			t.Fatalf("NewSparse2: %v", err)
 		}
 		for _, write := range c.writes {
 			if n, err := s.WriteAt(write.data, write.off); err != nil {
@@ -440,9 +440,9 @@ func TestWrites(t *testing.T) {
 			t.Errorf("buf (%#v) != bufexp (%#v)", buf, c.expected)
 		}
 		// Reopen.
-		s1, err := NewSparse(data, offsets)
+		s1, err := NewSparse2(data, offsets)
 		if err != nil {
-			t.Fatalf("NewSparse: %v", err)
+			t.Fatalf("NewSparse2: %v", err)
 		}
 		buf2 := make([]byte, len(c.expected))
 		if n, err := s1.ReadAt(buf2, c.readOff); err != nil {
@@ -493,9 +493,9 @@ func TestError(t *testing.T) {
 	for _, tc := range cases {
 		data := &BrokenAppender{impl: &DummyAppender{}}
 		offsets := &BrokenAppender{impl: &DummyAppender{}}
-		s, err := NewSparse(data, offsets)
+		s, err := NewSparse2(data, offsets)
 		if err != nil {
-			t.Fatalf("NewSparse: %v", err)
+			t.Fatalf("NewSparse2: %v", err)
 		}
 		// Write something.
 		buf := []byte{1, 2, 3}
@@ -536,9 +536,9 @@ func TestError(t *testing.T) {
 func TestFailsIfExtraData(t *testing.T) {
 	data := &DummyAppender{}
 	offsets := &DummyAppender{}
-	s, err := NewSparse(data, offsets)
+	s, err := NewSparse2(data, offsets)
 	if err != nil {
-		t.Fatalf("NewSparse: %v", err)
+		t.Fatalf("NewSparse2: %v", err)
 	}
 	// Write something.
 	if n, err := s.WriteAt([]byte{1, 2, 3}, 0); err != nil {
@@ -552,7 +552,7 @@ func TestFailsIfExtraData(t *testing.T) {
 	} else if n != 2 {
 		t.Fatalf("Append: n = %d", n)
 	}
-	if _, err = NewSparse(data, offsets); err == nil {
+	if _, err = NewSparse2(data, offsets); err == nil {
 		t.Errorf("want error")
 	}
 }
@@ -560,9 +560,9 @@ func TestFailsIfExtraData(t *testing.T) {
 func TestFailsIfDataCut(t *testing.T) {
 	data := &DummyAppender{}
 	offsets := &DummyAppender{}
-	s, err := NewSparse(data, offsets)
+	s, err := NewSparse2(data, offsets)
 	if err != nil {
-		t.Fatalf("NewSparse: %v", err)
+		t.Fatalf("NewSparse2: %v", err)
 	}
 	// Write something.
 	if n, err := s.WriteAt([]byte{1, 2, 3}, 0); err != nil {
@@ -571,7 +571,7 @@ func TestFailsIfDataCut(t *testing.T) {
 		t.Fatalf("WriteAt: n = %d", n)
 	}
 	data2 := &DummyAppender{1, 2}
-	if _, err = NewSparse(data2, offsets); err == nil {
+	if _, err = NewSparse2(data2, offsets); err == nil {
 		t.Errorf("want error")
 	}
 }

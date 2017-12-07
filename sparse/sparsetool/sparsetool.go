@@ -96,7 +96,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s, err := sparse.NewSparse(data, offsets)
+	s, err := sparse.NewSparse2(data, offsets)
 	if err != nil {
 		log.Fatalf("Failed to create sparse object: %s.", err)
 	}

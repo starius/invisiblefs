@@ -58,7 +58,7 @@ func (r *byteReader) ReadByte() (byte, error) {
 	return r.buf[0], nil
 }
 
-func NewSparse(data, offsets Appender) (*Sparse, error) {
+func NewSparse2(data, offsets Appender) (*Sparse, error) {
 	s := &Sparse{
 		index:   C.sparse_create(),
 		data:    data,
